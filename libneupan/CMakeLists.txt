@@ -32,6 +32,7 @@ add_library(neupan
   src/tensor_io.cpp
 )
 add_library(neupan::neupan ALIAS neupan)
+set_target_properties(neupan PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(neupan PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

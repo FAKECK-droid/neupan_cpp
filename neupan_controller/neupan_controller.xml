@@ -1,0 +1,7 @@
+<library path="neupan_controller">
+  <class name="neupan_controller::NeupanController"
+         type="neupan_controller::NeupanController"
+         base_class_type="nav2_core::Controller">
+    <description>NeuPAN differential-drive controller with direct PointCloud2 obstacles.</description>
+  </class>
+</library>

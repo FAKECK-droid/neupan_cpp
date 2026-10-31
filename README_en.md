@@ -72,6 +72,21 @@ python tools/export_dune_weights.py model_5000.pth your_robot.bin your_planner.y
 
 The footprint is taken from the yaml's `robot` section (`vertices`, or `length`/`width`/`wheelbase`) and must be the one the checkpoint was trained for. It is stored in the file and checked against the footprint configured in `planner.yaml` on load; a mismatch is an error.
 
+## Nav2 Controller Plugin
+
+[neupan_controller](neupan_controller/README.md) adds a ROS 2 Humble differential-drive
+controller backed by libneupan. planner_server supplies the global path through BT /
+FollowPath; obstacles come directly from PointCloud2. The plugin does not read local
+grid costs. Nav2 retains an empty local_costmap container for TF and the unpadded
+footprint. The included `neupan_controller_server` entry point sets typed empty
+layer arrays on the native server, avoiding Humble's empty-array YAML parsing issue.
+ROS 2 parameter callbacks support runtime speed, avoidance weight/margin, point-cloud
+filter and final rotation gain updates. Model, topic and horizon initialization
+parameters require cleanup/configure.
+See the plugin documentation and
+[parameter example](neupan_controller/config/neupan_controller.yaml) for topics,
+configuration, model/footprint matching, integration and tests.
+
 ## Usage
 
 ```bash

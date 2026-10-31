@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>neupan_controller</name>
+  <version>0.1.0</version>
+  <description>Nav2 Humble differential-drive controller using libneupan and PointCloud2.</description>
+  <maintainer email="robert_kaiyuan@utexas.edu">Kaiyuan Zhang</maintainer>
+  <license>GPL-3.0-or-later</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>libneupan</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>nav2_core</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_util</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>nav2_controller</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>rclcpp_action</test_depend>
+  <test_depend>action_msgs</test_depend>
+  <test_depend>nav2_msgs</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

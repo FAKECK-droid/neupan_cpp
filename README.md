@@ -76,6 +76,17 @@ python tools/export_dune_weights.py model_5000.pth your_robot.bin your_planner.y
 外形取自 yaml 的 `robot` 段(`vertices`,或 `length`/`width`/`wheelbase`),要与训练时一致。
 它会写进权重文件,加载时与 `planner.yaml` 配置的外形比对,不一致即报错。
 
+## Nav2 Controller 插件
+
+新增 [neupan_controller](neupan_controller/README.md)（ROS 2 Humble，差速），直接调用 libneupan。
+全局路径由 planner_server 生成，经 BT / FollowPath 传给插件；障碍输入为 PointCloud2。
+插件不读取局部栅格；Nav2 内部 local_costmap 配置为空图层容器，只提供 TF 与未加 padding 的轮廓。
+包内 `neupan_controller_server` 入口为原生 Nav2 server 设置带类型的空图层参数，规避 Humble 的 YAML 空数组问题。
+支持通过 ROS 2 参数服务动态更新速度、避障权重/距离、点云筛选和终点转向增益；
+模型、话题和预测时域等初始化参数需 cleanup/configure 后修改。
+话题、参数、模型轮廓匹配、接入与测试见插件文档和
+[参数示例](neupan_controller/config/neupan_controller.yaml)。
+
 ## 使用
 
 ```bash
