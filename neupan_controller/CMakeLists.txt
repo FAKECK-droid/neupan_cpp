@@ -4,6 +4,7 @@ project(neupan_controller VERSION 0.1.0 LANGUAGES CXX)
 find_package(ament_cmake REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(libneupan REQUIRED)
+find_package(laser_geometry REQUIRED)
 find_package(nav2_controller REQUIRED)
 find_package(nav2_core REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
@@ -37,13 +38,26 @@ target_compile_features(neupan_controller_server PRIVATE cxx_std_17)
 ament_target_dependencies(neupan_controller_server nav2_controller rclcpp)
 install(TARGETS neupan_controller_server DESTINATION lib/${PROJECT_NAME})
 
+add_executable(scan_to_cloud src/scan_to_cloud.cpp)
+target_compile_features(scan_to_cloud PRIVATE cxx_std_17)
+ament_target_dependencies(scan_to_cloud laser_geometry rclcpp sensor_msgs)
+target_compile_options(scan_to_cloud PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS scan_to_cloud DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS scripts/train_turtlebot3.py DESTINATION lib/${PROJECT_NAME})
+# Reuse the core export tools rather than maintaining a second NPTF writer.
+install(FILES
+  ../libneupan/tools/export_dune_weights.py
+  ../libneupan/tools/nptf.py
+  DESTINATION lib/${PROJECT_NAME})
+
 install(TARGETS neupan_controller EXPORT neupan_controllerTargets
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
-install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME}
+  PATTERN "__pycache__" EXCLUDE)
 install(FILES ${libneupan_MODELS_DIR}/diff_default.bin
   DESTINATION share/${PROJECT_NAME}/models)
-install(FILES README.md DESTINATION share/${PROJECT_NAME})
+install(FILES README.md TURTLEBOT3.md DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)

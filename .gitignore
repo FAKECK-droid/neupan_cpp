@@ -37,3 +37,4 @@ venv/
 
 # Build logs from local cmake/make runs
 build_logs/
+neupan_controller/models/

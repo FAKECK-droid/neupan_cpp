@@ -221,8 +221,17 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     if (!cloud_) throw nav2_core::PlannerException("Waiting for PointCloud2");
     const double age = (clock_->now() -
         rclcpp::Time(cloud_->header.stamp, clock_->get_clock_type())).seconds();
-    if (age < 0.0 || age > params_.pointcloud_timeout)
-      throw nav2_core::PlannerException("PointCloud2 timestamp is stale or in the future");
+    if (age > params_.pointcloud_timeout)
+      throw nav2_core::PlannerException(
+          "PointCloud2 is stale: age=" + std::to_string(age) +
+          " s, timeout=" + std::to_string(params_.pointcloud_timeout) + " s");
+    // Sensor messages and /clock travel independently. A cloud can arrive ahead
+    // of the latest clock tick while its timestamped TF is already available.
+    // Reuse Nav2's TF tolerance for this bounded lead; keep the acquisition stamp.
+    if (age < -transform_tolerance_)
+      throw nav2_core::PlannerException(
+          "PointCloud2 is too far in the future: lead=" + std::to_string(-age) +
+          " s, transform_tolerance=" + std::to_string(transform_tolerance_) + " s");
 
     const auto current = tf_->transform(
         pose, path_.header.frame_id,
@@ -249,7 +258,10 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     command.elapsed = control_period_;
     neupan::NeuPANPlanner::Info info;
     neupan::Vec2 action = planner_->forward(state, obstaclePoints(*cloud_), info, command);
-    if (info.stop) throw nav2_core::PlannerException("NeuPAN collision stop");
+    if (info.stop)
+      throw nav2_core::PlannerException(
+          "NeuPAN collision stop: distance=" + std::to_string(info.min_distance) +
+          " m, threshold=" + std::to_string(planner_->config().collision_threshold) + " m");
     if (!info.solved)
       throw nav2_core::PlannerException(
           "NeuPAN solver failed, status " + std::to_string(info.solver_status));

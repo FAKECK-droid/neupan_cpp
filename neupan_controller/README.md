@@ -26,6 +26,14 @@ Nav2 返回单个目标 pose 时，仅补入当前 pose 以适配库的外部路
   容差做原地转向；仍每周期调用库检查当前障碍距离并要求求解成功。转向角速度受
   `max_speed[1]` 和 `max_acce[1]` 约束。这里复用库的当前距离急停，不另加旋转扫掠碰撞检测。
 
+## TurtleBot3 官方仿真与 GPU 训练
+
+[TurtleBot3 Waffle 使用说明](TURTLEBOT3.md) 提供自定义仿真启动、控制器覆盖配置和
+CUDA DUNE 训练脚本。此入口沿用原版 controller_server 与官方 Nav2 bringup，只替换
+FollowPath，并根据 Waffle 模型设定训练及导航轮廓；保留官方 costmap 图层。
+使用 laser_geometry 将官方 /scan 转为 PointCloud2，训练后自动导出 C++ 所需的 NPTF。
+详见该文档的编译、训练和启动命令；当前仅编译，未运行训练、仿真或测试。
+
 ## 编译和接入
 
 在工作空间根目录执行：
@@ -100,7 +108,10 @@ NaN/Inf 丢弃；地面、顶棚和车体自反射应通过高度参数及上游
 典型 TF：`map → odom → base_link → lidar/camera_optical_frame`。
 点云时间戳必须与 ROS 时钟一致；`pointcloud_timeout` 按消息采集时间判断，
 不按接收时间延长旧观测。需要保留点云采集时刻的 TF。
-新鲜空点云（或筛选后无点）表示当前没有障碍；缺少消息、过期消息、未来时间戳、TF 缺失、
+传感器与 /clock 独立传输，点云允许最多提前 `local_costmap.transform_tolerance` 秒，
+但仍使用采集时间查询 TF；超过该提前量或超过 pointcloud_timeout 的旧点云会拒绝，
+异常消息分别给出实际时间差和限值，不修改消息时间戳。
+新鲜空点云（或筛选后无点）表示当前没有障碍；缺少消息、超时、超限未来时间戳、TF 缺失、
 字段格式错误则抛出 Nav2 异常。插件不再使用上一帧障碍继续行驶。
 仿真时统一给 controller_server、local_costmap、planner_server 和传感器设置 `use_sim_time`。
 

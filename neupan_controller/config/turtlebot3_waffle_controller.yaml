@@ -1,0 +1,35 @@
+# Overlay for nav2_bringup/params/nav2_params.yaml: replace FollowPath only.
+# The launch file takes footprint and speed limits from turtlebot3_waffle_train.yaml.
+controller_server:
+  ros__parameters:
+    FollowPath:
+      plugin: neupan_controller::NeupanController
+      points_topic: scan/points
+      pointcloud_timeout: 0.5
+      min_obstacle_height: 0.02
+      max_obstacle_height: 0.35
+      min_obstacle_range: 0.0
+      max_obstacle_range: 3.5
+      # dune_checkpoint is supplied by the launch argument, never diff_default.bin.
+      receding: 20
+      step_time: 0.05
+      ref_speed: 0.20
+      collision_threshold: 0.03
+      rotate_to_goal_gain: 2.0
+      ipath:
+        interval: 0.025
+        close_threshold: 0.05
+        ind_range: 10
+      pan:
+        iter_num: 2
+        dune_max_num: 100
+        nrmp_max_num: 10
+        iter_threshold: 0.1
+      adjust:
+        q_s: [1.0, 1.0, 1.0]
+        p_u: 1.0
+        eta: 10.0
+        d_max: 0.30
+        d_min: 0.08
+        ro_obs: 400.0
+        bk: 0.1

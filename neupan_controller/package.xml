@@ -7,6 +7,7 @@
   <license>GPL-3.0-or-later</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>libneupan</depend>
+  <depend>laser_geometry</depend>
   <depend>ament_index_cpp</depend>
   <depend>nav2_core</depend>
   <depend>nav2_costmap_2d</depend>
@@ -22,6 +23,12 @@
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>nav2_controller</depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>turtlebot3_gazebo</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>rclcpp_action</test_depend>
   <test_depend>action_msgs</test_depend>

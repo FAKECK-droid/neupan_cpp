@@ -77,8 +77,8 @@ The footprint is taken from the yaml's `robot` section (`vertices`, or `length`/
 [neupan_controller](neupan_controller/README.md) adds a ROS 2 Humble differential-drive
 controller backed by libneupan. planner_server supplies the global path through BT /
 FollowPath; obstacles come directly from PointCloud2. The plugin does not read local
-grid costs. Nav2 retains an empty local_costmap container for TF and the unpadded
-footprint. The included `neupan_controller_server` entry point sets typed empty
+grid costs. The generic parameter example retains an empty local_costmap container
+for TF and the unpadded footprint. The included `neupan_controller_server` entry point sets typed empty
 layer arrays on the native server, avoiding Humble's empty-array YAML parsing issue.
 ROS 2 parameter callbacks support runtime speed, avoidance weight/margin, point-cloud
 filter and final rotation gain updates. Model, topic and horizon initialization
@@ -86,6 +86,11 @@ parameters require cleanup/configure.
 See the plugin documentation and
 [parameter example](neupan_controller/config/neupan_controller.yaml) for topics,
 configuration, model/footprint matching, integration and tests.
+[TurtleBot3 Waffle simulation and GPU training](neupan_controller/TURTLEBOT3.md)
+also retains the original controller_server and official navigation stack, replaces
+FollowPath, shares the collision-model-based Waffle footprint between training and
+navigation, and projects laser scans into PointCloud2. The upstream CUDA DUNE trainer
+exports NPTF automatically. Compilation only; training, simulation and tests have not been run.
 
 ## Usage
 
