@@ -27,7 +27,7 @@ controller_server:
       # Initialization only: points_topic, dune_checkpoint, receding, step_time,
       # ipath.interval and pan.nrmp_max_num (cleanup/configure to change).
       points_topic: points
-      pointcloud_timeout: 0.5
+      pointcloud_timeout: 2.0
       # Height and XY range in robot_base_frame at the cloud's timestamp.
       min_obstacle_height: 0.05
       max_obstacle_height: 1.5
@@ -35,6 +35,7 @@ controller_server:
       max_obstacle_range: 10.0
       # Omit dune_checkpoint to use the installed diff_default.bin.
       # Set an absolute path to the NPTF .bin trained for your own footprint.
+      dune_checkpoint: /root/scout_mini_ws/src/neupan_cpp/neupan_controller/models/scout_mini_waffle/scout_mini.bin
       receding: 10
       step_time: 0.05
       ref_speed: 0.5

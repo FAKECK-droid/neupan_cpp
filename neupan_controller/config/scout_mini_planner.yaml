@@ -1,0 +1,55 @@
+# Scout Mini 的 libneupan 原生 planner.yaml 配置（不是 Nav2 ROS 参数文件）。
+# 参考：https://github.com/zhangkaiyuan007/neupan_cpp/blob/main/neupan_cpp_ros/config/planner.yaml
+# 几何和运动上限取自同目录 scout_mini_waffle_train.yaml 的实际 robot 参数。
+# 当前 Nav2 插件读取 controller_server.ros__parameters.FollowPath；
+# 仅添加此文件不会自动替换该插件的参数或 costmap footprint。
+
+# MPC：沿用上游 10 步、0.1 s，预测时域 1 s。
+# 参考速度低于训练配置中的 0.26 m/s 线速度上限。
+receding: 10
+step_time: 0.1
+ref_speed: 0.20
+collision_threshold: 0.1
+
+robot:
+  kinematics: diff
+  max_speed: [0.26, 1.0]       # [m/s, rad/s]，与训练配置一致
+  max_acce: [2.5, 3.2]        # [m/s^2, rad/s^2]，与训练配置一致
+  # base_link 下的 0.627 × 0.549 m 矩形。
+  # 严格保留训练时的顶点起点和顺序，确保导出模型的 G/h 匹配。
+  vertices:
+    - [0.3135, 0.2745]
+    - [-0.3135, 0.2745]
+    - [-0.3135, -0.2745]
+    - [0.3135, -0.2745]
+
+ipath:
+  # 路径由调用方提供，不在这里写入固定 waypoints。
+  curve_style: line
+  loop: false
+  interval: 0.02              # ref_speed * step_time
+  arrive_threshold: 0.1
+  close_threshold: 0.1
+  ind_range: 10
+  arrive_index_threshold: 1
+  # libneupan 扩展：以当前位置在路径上的投影生成参考，避免追赶身后路径点。
+  projected_reference: true
+
+pan:
+  iter_num: 2
+  dune_max_num: 100
+  nrmp_max_num: 10
+  iter_threshold: 0.1
+  # train_scout_mini.py 训练结束后导出的 NPTF 文件，不能使用其他轮廓的模型。
+  # 训练尚未结束时可能只有周期 .pth；本文件不会自动训练或导出模型。
+  dune_checkpoint: /root/scout_mini_ws/src/neupan_cpp/neupan_controller/models/scout_mini_waffle/scout_mini.bin
+
+# 避障权重与距离沿用所参考的上游 planner.yaml，作为初始配置。
+adjust:
+  q_s: 1.0
+  p_u: 1.0
+  eta: 15.0
+  d_max: 1.0
+  d_min: 0.1
+  ro_obs: 10.0
+  bk: 0.0

@@ -37,4 +37,6 @@ venv/
 
 # Build logs from local cmake/make runs
 build_logs/
-neupan_controller/models/
+neupan_controller/models/scout_mini_waffle/*.pth
+neupan_controller/models/scout_mini_waffle/*.txt
+neupan_controller/models/scout_mini_waffle/*.pkl
