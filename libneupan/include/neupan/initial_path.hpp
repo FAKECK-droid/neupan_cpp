@@ -34,7 +34,8 @@ class InitialPath {
     int ind_range = 10;
     int arrive_index_threshold = 1;
     // The reference starts at the robot's projection on the path and steps
-    // exactly ref_speed * dt along it. Upstream starts at the first path point
+    // exactly ref_speed * dt along its arc length, persisting the nearest segment.
+    // Upstream starts at the first path point
     // within close_threshold, up to a point behind the robot, and the plan
     // zigzags at full speed to fall back to it.
     bool projected_reference = false;
@@ -81,6 +82,8 @@ class InitialPath {
   // advancing ref_index; mirrors find_interaction_point.
   Vec3 findInteractionPoint(const Vec3& ref_state, int& ref_index,
                             double length) const;
+  Vec3 projectReference(const Vec3& state, int& index) const;
+  Vec3 advanceReference(Vec3 reference, int& index, double length) const;
   Vec3 motionPredict(const Vec3& state, const Vec2& vel) const;
   // Omni nominal step u = (v, direction). The linearized model only sees
   // small turns of the direction of travel, and none at all at zero speed, so

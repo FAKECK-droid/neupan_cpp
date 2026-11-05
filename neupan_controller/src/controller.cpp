@@ -126,6 +126,10 @@ void NeupanController::configure(
   cfg.adjust.ro_obs = parameter(node, name + ".adjust.ro_obs", cfg.adjust.ro_obs);
   cfg.adjust.bk = parameter(node, name + ".adjust.bk", cfg.adjust.bk);
   planner_ = std::make_unique<neupan::NeuPANPlanner>(cfg);
+  reference_pub_ = node->create_publisher<nav_msgs::msg::Path>(
+      name + "/reference_path", rclcpp::QoS(1));
+  optimized_pub_ = node->create_publisher<nav_msgs::msg::Path>(
+      name + "/optimized_path", rclcpp::QoS(1));
   speed_limit_ = nav2_costmap_2d::NO_SPEED_LIMIT;
   speed_limit_percentage_ = false;
   applySpeedLimit();
@@ -138,6 +142,8 @@ void NeupanController::configure(
 void NeupanController::activate() {
   std::lock_guard<std::mutex> lock(mutex_);
   planner_->reset();
+  reference_pub_->on_activate();
+  optimized_pub_->on_activate();
   rotating_to_goal_ = false;
   have_command_ = false;
   {
@@ -155,6 +161,8 @@ void NeupanController::activate() {
 void NeupanController::deactivate() {
   std::lock_guard<std::mutex> lock(mutex_);
   points_sub_.reset();
+  reference_pub_->on_deactivate();
+  optimized_pub_->on_deactivate();
   {
     std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
     cloud_.reset();
@@ -167,6 +175,8 @@ void NeupanController::cleanup() {
   parameter_callback_.reset();
   deactivate();
   planner_.reset();
+  reference_pub_.reset();
+  optimized_pub_.reset();
   tf_.reset();
   path_ = nav_msgs::msg::Path{};
 }
@@ -284,6 +294,35 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     command.elapsed = continuing ? elapsed : control_period_;
     neupan::NeuPANPlanner::Info info;
     neupan::Vec2 action = planner_->forward(state, obstaclePoints(*cloud), info, command);
+    // Publish the actual solver inputs/results, not another copy of the global path.
+    const auto publish_trajectory = [&](const auto& publisher, const neupan::Mat3X& states) {
+      if (publisher->get_subscription_count() == 0) return;
+      nav_msgs::msg::Path trajectory;
+      trajectory.header.frame_id = path_.header.frame_id;
+      trajectory.header.stamp = current.header.stamp;
+      trajectory.poses.reserve(states.cols());
+      for (Eigen::Index i = 0; i < states.cols(); ++i) {
+        geometry_msgs::msg::PoseStamped p;
+        p.header = trajectory.header;
+        p.pose.position.x = states(0, i);
+        p.pose.position.y = states(1, i);
+        p.pose.orientation.z = std::sin(states(2, i) / 2.0);
+        p.pose.orientation.w = std::cos(states(2, i) / 2.0);
+        trajectory.poses.push_back(p);
+      }
+      publisher->publish(trajectory);
+    };
+    publish_trajectory(reference_pub_, info.ref_s);
+    publish_trajectory(optimized_pub_, info.opt_s);
+    RCLCPP_DEBUG_THROTTLE(
+        node_.lock()->get_logger(), *clock_, 1000,
+        "NeuPAN tracking: frame=%s state=(%.3f, %.3f, %.3f) segment=%d "
+        "ref_end=(%.3f, %.3f) goal=(%.3f, %.3f) solved=%d stop=%d v=%.3f w=%.3f",
+        path_.header.frame_id.c_str(), state.x(), state.y(), state.z(),
+        planner_->ipath().point_index_,
+        info.ref_s(0, info.ref_s.cols() - 1), info.ref_s(1, info.ref_s.cols() - 1),
+        path_.poses.back().pose.position.x, path_.poses.back().pose.position.y,
+        static_cast<int>(info.solved), static_cast<int>(info.stop), action.x(), action.y());
     if (info.stop)
       throw nav2_core::PlannerException(
           "NeuPAN collision stop: distance=" + std::to_string(info.min_distance) +

@@ -86,6 +86,8 @@ python tools/export_dune_weights.py model_5000.pth your_robot.bin your_planner.y
 模型、话题和预测时域等初始化参数需 cleanup/configure 后修改。
 连续控制的首步加速度约束跟随上一条输出命令，避免低速里程计反馈把起步锁死；
 Scout 配置包含匹配模型、1 秒预测时域和缩小的目标间距，模型支持包内相对路径。
+投影模式保存最近线段进度，按路径弧长生成参考轨迹；发布 reference_path / optimized_path 供 RViz 核对。
+Scout 线速度上限与实车下游限速对齐为 0.3 m/s，避免独立裁剪线速度改变转弯曲率。
 话题、参数、模型轮廓匹配、接入与测试见插件文档和
 [参数示例](neupan_controller/config/neupan_controller.yaml)。
 另提供 [TurtleBot3 Waffle 官方仿真接入与 GPU 训练](neupan_controller/TURTLEBOT3.md)：

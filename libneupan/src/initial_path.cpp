@@ -55,7 +55,8 @@ std::vector<InitialPath::PathPoint> InitialPath::generateLineCurve(
     const double theta = std::atan2(diff.y(), diff.x());
 
     double cur_len = 0.0;
-    while (cur_len + interval_ < length) {
+    // Do not create a near-zero final segment from floating-point roundoff.
+    while (cur_len + interval_ < length - 1e-9) {
       cur_len += interval_;
       const Vec2 p = sp + cur_len * dir;
       curve.emplace_back(p.x(), p.y(), theta, 1.0);
@@ -183,7 +184,12 @@ bool InitialPath::checkArrive(const Vec3& state) {
   if (!hasPath()) setIpathWithState(state);
   // Latch: recomputing every cycle flickers off when the robot settles past the end.
   if (arrive_flag_) return true;
-  closestPoint(state, opts_.close_threshold, opts_.ind_range);
+  if (opts_.projected_reference) {
+    // Persist the projected segment, not the first vertex within a tolerance.
+    projectReference(state, point_index_);
+  } else {
+    closestPoint(state, opts_.close_threshold, opts_.ind_range);
+  }
 
   if (checkCurveArrive(state)) {
     if (curve_index_ + 1 >= static_cast<int>(curve_list_.size())) {
@@ -245,6 +251,48 @@ Vec3 InitialPath::findInteractionPoint(const Vec3& ref_state, int& ref_index,
   }
 }
 
+Vec3 InitialPath::projectReference(const Vec3& state, int& index) const {
+  const auto& curve = curCurve();
+  Vec3 reference = curve[index].head<3>();
+  double best = std::numeric_limits<double>::infinity();
+  const int last = std::min(index + opts_.ind_range,
+                            static_cast<int>(curve.size()) - 1);
+  const int first = std::max(index - 1, 0);
+  for (int i = first; i < last; ++i) {
+    const Vec2 a = curve[i].head<2>(), d = curve[i + 1].head<2>() - a;
+    const double u = d.squaredNorm() > 0.0
+        ? std::clamp((state.head<2>() - a).dot(d) / d.squaredNorm(), 0.0, 1.0)
+        : 0.0;
+    const Vec2 p = a + u * d;
+    const double distance = (state.head<2>() - p).squaredNorm();
+    if (distance < best) {
+      best = distance;
+      reference << p, curve[i](2);
+      index = i;
+    }
+  }
+  return reference;
+}
+
+Vec3 InitialPath::advanceReference(Vec3 reference, int& index,
+                                   double length) const {
+  const auto& curve = curCurve();
+  // Walk the polyline by arc length. Circle intersections can skip an entire
+  // bend that lies inside the circle, or select a later branch of a tight turn.
+  while (length > 0.0 && index + 1 < static_cast<int>(curve.size())) {
+    const Vec2 delta = curve[index + 1].head<2>() - reference.head<2>();
+    const double remaining = delta.norm();
+    if (length < remaining) {
+      reference.head<2>() += (length / remaining) * delta;
+      reference(2) = curve[index](2);
+      return reference;
+    }
+    length -= remaining;
+    reference = curve[++index].head<3>();
+  }
+  return reference;
+}
+
 Vec3 InitialPath::motionPredict(const Vec3& state, const Vec2& vel) const {
   switch (robot_.kinematics) {
     case Kinematics::Diff: {
@@ -279,24 +327,8 @@ InitialPath::NomRef InitialPath::generateNomRefState(
 
   Vec3 ref_state = curve[point_index_].head<3>();
   int ref_index = point_index_;
-  if (opts_.projected_reference) {
-    double best = std::numeric_limits<double>::infinity();
-    const int last = std::min(point_index_ + opts_.ind_range, n - 1);
-    for (int i = std::max(point_index_ - 1, 0); i < last; ++i) {
-      const Vec2 a = curve[i].head<2>(), d = curve[i + 1].head<2>() - a;
-      const double u =
-          d.squaredNorm() > 0.0
-              ? std::clamp((state.head<2>() - a).dot(d) / d.squaredNorm(), 0.0, 1.0)
-              : 0.0;
-      const Vec2 p = a + u * d;
-      const double dist = (state.head<2>() - p).norm();
-      if (dist < best) {
-        best = dist;
-        ref_state << p, curve[i](2);
-        ref_index = i;
-      }
-    }
-  }
+  if (opts_.projected_reference)
+    ref_state = projectReference(state, ref_index);
   Vec3 pre_state = state;
 
   NomRef out;
@@ -313,9 +345,8 @@ InitialPath::NomRef InitialPath::generateNomRefState(
 
   for (int t = 0; t < T_; ++t) {
     if (opts_.projected_reference) {
-      ref_state = findInteractionPoint(ref_state, ref_index,
-                                       ref_speed_forward);
-      if (ref_index > n - 2) gear(t) = 0.0;  // at the end of the path
+      ref_state = advanceReference(ref_state, ref_index, ref_speed_forward);
+      if (ref_index == n - 1) gear(t) = 0.0;  // at the end of the path
     } else if (ref_speed_forward >= interval_) {
       const int inc = static_cast<int>(ref_speed_forward / interval_);
       ref_index += inc;

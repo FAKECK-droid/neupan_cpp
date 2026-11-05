@@ -99,6 +99,8 @@ CMake 会安装该模型；相对 `dune_checkpoint` 从本包 share 目录解析
 | 输入 | `/tf`、`/tf_static` | 路径坐标系、odom、base_link、传感器之间的变换 |
 | 输入 controller_server | `speed_limit` | `nav2_msgs/msg/SpeedLimit`，Nav2 外部线速度上限 |
 | 输出 controller_server | `cmd_vel` | `geometry_msgs/msg/Twist` |
+| 输出插件 | `FollowPath/reference_path` | `nav_msgs/msg/Path`，本周期实际送入 NRMP 的参考状态 |
+| 输出插件 | `FollowPath/optimized_path` | `nav_msgs/msg/Path`，本周期 PAN 输出的预测轨迹 |
 
 话题默认使用相对名称，跟随 controller_server 的 namespace。
 雷达例：`points_topic: /lidar/points`；相机例：
@@ -154,6 +156,33 @@ Nav2 SpeedLimit 的绝对值单位为 m/s，百分比相对于配置的最大线
 Humble controller_server 按 `failure_tolerance` 发送零速度并等待恢复或终止 FollowPath。
 插件不增加失败计数、重试求解、自己的定时控制循环或全局规划回退。
 
+## 路径跟踪与诊断
+
+插件固定启用库的 projected_reference 模式。进度由当前位置投影到邻近路径线段确定，
+每周期保存投影线段索引，不再停在 close_threshold 内遇到的第一个顶点。
+后续参考点按 ref_speed × step_time 的**路径弧长**前进；不再用圆与后续线段的交点跳过弯道。
+ipath.ind_range 仍限制邻近搜索窗口（点数）；close_threshold 仅影响库的非投影模式，
+不影响本插件。重采样同时避免浮点尾差产生几乎重合的末端点和不可靠的切线朝向。
+
+在 RViz 添加两个 Path 显示：`/FollowPath/reference_path` 和
+`/FollowPath/optimized_path`（有 namespace 时加对应前缀）。它们采用全局路径坐标系；
+仅有订阅者时组装消息，QoS 为 reliable/volatile、depth 1。
+参考轨迹应从机器人在全局路径附近的投影位置向前延伸；优化轨迹从当前机器人位置开始。
+优化轨迹在碰撞停止或求解失败时也会发布供诊断，此时不能把它当作已执行的轨迹。
+它也不包含 Nav2 恢复动作、终点转向覆盖和下游速度平滑器的输出。
+controller_server 使用 DEBUG 日志时，每秒报告位姿、投影段索引、参考末端、目标和求解状态。
+
+Scout 示例的 ref_speed 和 max_speed[0] 均设为 0.3 m/s，与实车导航的
+velocity_smoother.max_velocity[0] 对齐。使用其他速度限制时，控制器的 v/w 上限
+不能超过下游可执行上限；参考速度也应不超过线速度上限。
+例如 (v,w)=(0.5,0.5) 被下游仅截断 v 至 0.3 后，转弯半径从 1 m 变为 0.6 m，
+会造成比预测更急的转向。优先在优化器内部配置一致的速度/加速度约束，
+不要单靠下游裁剪修正不匹配的控制参数。
+
+`Failed to make progress` 只说明位移不足；随后的 spin/backup 可能是 behavior_server
+恢复动作。区分参考轨迹未前进、优化轨迹偏离、以及实际底盘未按优化轨迹运动，
+需要对照上述两条轨迹、TF 和 cmd_vel_nav/cmd_vel。当前改动只完成编译，不代表实车效果已验证。
+
 ## 起步与停滞修复
 
 插件沿用原 C++ ROS 封装的命令历史语义：首步加速度约束相对上一条输出，
@@ -163,7 +192,8 @@ Humble controller_server 按 `failure_tolerance` 发送零速度并等待恢复�
 
 Scout 配置的预测时域由 0.5 s 调为 1 s，维持 10 步和 20 Hz 控制频率；
 p_u=2、eta=1、d_max=0.3 m，避免在低速短前视下持续追求 1 m 间距而偏好原地停住。
-d_min、碰撞停止距离、速度和加速度上限保留。点云最大距离设为 3.5 m，
+d_min、碰撞停止距离和加速度上限保留；后续将线速度上限对齐到实车的 0.3 m/s。
+点云最大距离设为 3.5 m，
 与当前 Scout 模型的训练点范围 [-5, 5] m 及预测位移相容。
 TurtleBot3 覆盖配置也调整 p_u/eta，仍保留自身轮廓与距离阈值。
 这些是根据代码与上游建议确定的初始值，开发板离线期间仅编译，未做硬件或仿真验证。
@@ -185,7 +215,7 @@ TurtleBot3 覆盖配置也调整 p_u/eta，仍保留自身轮廓与距离阈值�
 | `rotate_to_goal_gain` | 直接更新，下一控制周期采用新增益 |
 | `ref_speed` | 调用库的 setReferenceSpeed，保留当前规划状态 |
 | `max_speed`、`max_acce`、`collision_threshold` | 按新配置重建核心规划器 |
-| `ipath.close_threshold`、`ipath.ind_range` | 按新配置重建核心规划器 |
+| `ipath.close_threshold`、`ipath.ind_range` | 重建核心规划器；插件使用投影模式，close_threshold 不影响其进度搜索 |
 | `pan.iter_num`、`pan.dune_max_num`、`pan.iter_threshold` | 按新配置重建核心规划器 |
 | `adjust.q_s`、`adjust.p_u`、`adjust.eta`、`adjust.d_max`、`adjust.d_min`、`adjust.ro_obs`、`adjust.bk` | 调用库的 NRMP::updateParams，下一次求解重建 QP，保留路径和标称控制序列 |
 

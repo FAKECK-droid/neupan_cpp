@@ -39,8 +39,10 @@ controller_server:
       receding: 10
       # A 1 s horizon at the same QP size; control still updates at 20 Hz.
       step_time: 0.1
-      ref_speed: 0.5
-      max_speed: [0.8, 1.0]   # [m/s, rad/s]
+      # Match the Scout navigation velocity_smoother linear limit.
+      # Independent downstream clipping of v changes the planned v/w curvature.
+      ref_speed: 0.3
+      max_speed: [0.3, 1.0]   # [m/s, rad/s]
       max_acce: [1.0, 2.0]    # [m/s^2, rad/s^2]
       collision_threshold: 0.1
       rotate_to_goal_gain: 2.0

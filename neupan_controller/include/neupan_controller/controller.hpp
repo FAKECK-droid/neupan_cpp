@@ -52,6 +52,8 @@ class NeupanController : public nav2_core::Controller {
   std::unique_ptr<neupan::NeuPANPlanner> planner_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr points_sub_;
   sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_;
+  rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr reference_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr optimized_pub_;
   nav_msgs::msg::Path path_;
   std::string name_;
   std::string points_topic_;
