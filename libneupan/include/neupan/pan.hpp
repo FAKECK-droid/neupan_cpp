@@ -36,7 +36,17 @@ class PAN {
   PAN(const Robot& robot, const std::string& dune_checkpoint,
       const NRMPParams& nrmp_params, const Options& opts);
 
+  struct Timing {
+    double total_ms = 0.0;
+    double point_flow_ms = 0.0;
+    double dune_ms = 0.0;
+    double coefficients_ms = 0.0;
+    NRMP::Timing nrmp;  // accumulated over every attempted iteration
+    int iterations = 0;
+  };
+
   struct Output {
+    Timing timing;
     Mat3X opt_s;
     Mat2X opt_u;
     Vec opt_d;

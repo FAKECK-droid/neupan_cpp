@@ -11,6 +11,7 @@
  */
 
 #include "neupan/nrmp.hpp"
+#include "neupan/timing.hpp"
 
 #include <cstdlib>
 #include <stdexcept>
@@ -205,8 +206,13 @@ NRMP::Result NRMP::solve(const Mat3X& nom_s, const Mat2X& nom_u,
                          const std::vector<Mat>& fa_list,
                          const std::vector<Vec>& fb_list,
                          const std::optional<Box>& first) {
+  const Stopwatch total;
+  Stopwatch phase;
+  Result res;
   assemble(nom_s, nom_u, ref_s, ref_us, fa_list, fb_list, first);
+  res.timing.assembly_ms = phase.elapsedMs();
 
+  phase.restart();
   if (!initialized_) {
     solver_ = std::make_unique<OsqpEigen::Solver>();
     solver_->settings()->setVerbosity(std::getenv("NEUPAN_OSQP_VERBOSE") != nullptr);
@@ -231,9 +237,12 @@ NRMP::Result NRMP::solve(const Mat3X& nom_s, const Mat2X& nom_u,
       throw std::runtime_error("nrmp: OSQP update failed");
   }
 
-  Result res;
+  res.timing.setup_ms = phase.elapsedMs();
+  phase.restart();
   const bool no_error =
       solver_->solveProblem() == OsqpEigen::ErrorExitFlag::NoError;
+  res.timing.solve_ms = phase.elapsedMs();
+  phase.restart();
   res.status = static_cast<int>(solver_->getStatus());
   res.success = no_error && solver_->getStatus() == OsqpEigen::Status::Solved;
 
@@ -243,6 +252,8 @@ NRMP::Result NRMP::solve(const Mat3X& nom_s, const Mat2X& nom_u,
   res.d = z.segment(off_d_, T_);
   res.objective =
       objective(res.s, res.u, res.d, nom_s, ref_s, ref_us, fa_list, fb_list);
+  res.timing.postprocess_ms = phase.elapsedMs();
+  res.timing.total_ms = total.elapsedMs();
   return res;
 }
 

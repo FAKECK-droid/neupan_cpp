@@ -60,7 +60,14 @@ class NeuPANPlanner {
   static NeuPANPlanner fromYaml(const std::string& yaml_path,
                                 const std::string& checkpoint_override = "");
 
+  struct Timing {
+    double total_ms = 0.0;
+    double reference_ms = 0.0;  // arrival/progress check and nominal/reference generation
+    PAN::Timing pan;
+  };
+
   struct Info {
+    Timing timing;
     bool arrive = false;
     bool stop = false;
     // False: the action is a nominal with no avoidance; act on it only briefly.

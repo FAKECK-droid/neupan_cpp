@@ -107,6 +107,7 @@ CMake 会安装该模型；相对 `dune_checkpoint` 从本包 share 目录解析
 | 输出 controller_server | `cmd_vel` | `geometry_msgs/msg/Twist` |
 | 输出插件 | `FollowPath/reference_path` | `nav_msgs/msg/Path`，本周期实际送入 NRMP 的参考状态 |
 | 输出插件 | `FollowPath/optimized_path` | `nav_msgs/msg/Path`，本周期 PAN 输出的预测轨迹 |
+| 输出插件 | `FollowPath/timing` | `diagnostic_msgs/msg/DiagnosticArray`，核心各阶段耗时与统计 |
 
 话题默认使用相对名称，跟随 controller_server 的 namespace。
 雷达例：`points_topic: /lidar/points`；相机例：
@@ -136,6 +137,7 @@ NaN/Inf 丢弃；地面、顶棚和车体自反射应通过高度参数及上游
 | 参数 | 默认值 | 含义 |
 |---|---|---|
 | `points_topic` | `points` | 输入点云 |
+| `timing_topic` | `FollowPath/timing` | 耗时诊断输出话题，默认随 Controller ID 和 namespace |
 | `pointcloud_timeout` | 0.5 s | 消息最大年龄 |
 | `min_obstacle_height / max_obstacle_height` | 0.05 / 1.5 m | 车体系 Z 范围 |
 | `min_obstacle_range / max_obstacle_range` | 0 / 10 m | 车体系 XY 范围 |
@@ -214,6 +216,52 @@ TurtleBot3 覆盖配置也调整 p_u/eta，仍保留自身轮廓与距离阈值�
 旧参数 `rotate_to_goal_gain` 已删除，应从调用方 YAML 移除；终点朝向权重使用
 `adjust.q_s[2]`。只调整这一权重不能保证任意位置/朝向目标均收敛。
 
+## 耗时统计
+
+核心库使用 std::chrono::steady_clock，毫秒单位，不受 use_sim_time 或系统时间跳变影响。
+每次 forward 的结果通过 `NeuPANPlanner::Info::timing` 返回；PAN::Output 和
+NRMP::Result 也分别带有 timing，直接调用核心库即可读取，无 ROS 依赖。
+
+控制器默认发布 `/FollowPath/timing`，可用初始化参数
+`FollowPath.timing_topic` 指定绝对话题，如 `/neupan/timing`。
+默认相对名称随 controller_server 的 namespace；消息类型为
+diagnostic_msgs/msg/DiagnosticArray，QoS 为 best effort、volatile、depth 1。
+
+每条消息的 status[0].values 中包含以下阶段。每个阶段都有
+`<名称>_ms`（本周期）、`<名称>_mean_ms` 和 `<名称>_max_ms`：
+
+| 名称 | 计时范围 |
+|---|---|
+| planner_total | 整个核心 forward，包含结果复制及当前距离检查 |
+| reference | 到达/路径进度检查、nominal 和参考状态生成 |
+| pan_total | PAN 整个外层循环，包含收敛检查等开销 |
+| point_flow | 降采样、各预测时刻的点云坐标变换 |
+| dune | DUNE 网络、距离计算与点排序 |
+| nrmp_coefficients | 根据 DUNE 输出构造避障系数 |
+| nrmp_total | 所有 NRMP 调用的完整耗时 |
+| qp_assembly | Hessian、梯度、约束矩阵与边界组装 |
+| qp_setup | OSQP 首次初始化或后续数值更新 |
+| qp_solve | solveProblem 调用，包括求解器内的 polishing |
+| nrmp_postprocess | 提取解并重算目标函数 |
+
+PAN 子阶段和 NRMP 子阶段均累加本周期实际尝试的全部迭代。
+层级计时存在包含关系，例如 nrmp_total 包含 qp_solve；不能把表中所有值相加。
+另有 `samples`、`pan_iterations`（本周期实际尝试次数）、`solver_status`。
+status 的 message 为 solved、solver_failed、collision_stop 或 arrived。
+
+均值/最大值从本次 activate 开始统计，deactivate/activate 后清零；周期性 setPlan、
+新目标和动态调参不清零。无订阅者时仍计时并累计统计，但不构造或序列化消息。
+只统计正常返回的核心调用，包含未收敛和碰撞停止结果；点云/TF 错误等导致没有调用核心，
+或核心抛出异常时不产生该周期样本。无障碍点时 point_flow/dune 为零。
+这不是完整控制周期耗时：不含插件的路径替换、点云解析/TF、ROS 序列化和发布耗时。
+
+查看或录制（由用户执行）：
+
+```bash
+ros2 topic echo /FollowPath/timing --qos-reliability best_effort
+ros2 bag record /FollowPath/timing
+```
+
 ## 动态调参
 
 在 configure 后注册参数回调，cleanup 时移除；active 和 inactive 状态都支持下表中的动态参数。
@@ -247,7 +295,7 @@ ros2 param set /controller_server FollowPath.max_obstacle_height 1.2
 涉及互相约束的参数（如 `adjust.d_min/d_max`），可以通过 ROS 2
 `/controller_server/set_parameters_atomically` 服务在同一请求中修改，避免中间组合无效。
 
-`points_topic`、`dune_checkpoint`、`receding`、`step_time`、`ipath.interval`、
+`points_topic`、`timing_topic`、`dune_checkpoint`、`receding`、`step_time`、`ipath.interval`、
 `pan.nrmp_max_num` 以及插件类型属于初始化参数；插件处于已配置状态时会明确拒绝修改。
 需要先 `deactivate → cleanup`，再设置参数，随后 `configure → activate`，或修改 YAML 后重启。
 轮廓、base frame、TF 容差和控制周期仍在 configure 时从 Nav2 读取，

@@ -11,6 +11,7 @@
  */
 
 #include "neupan/pan.hpp"
+#include "neupan/timing.hpp"
 
 #include <cmath>
 #include <limits>
@@ -111,6 +112,7 @@ bool PAN::stopCriteria(const Mat3X& nom_s, const Mat2X& nom_u,
 PAN::Output PAN::forward(Mat3X nom_s, Mat2X nom_u, const Mat3X& ref_s,
                          const Vec& ref_us, const Mat2X& points,
                          const std::optional<NRMP::Box>& first) {
+  const Stopwatch total;
   Output out;
   out.min_distance = std::numeric_limits<double>::infinity();
   // If the very first NRMP solve fails to converge we keep these 
@@ -124,22 +126,35 @@ PAN::Output PAN::forward(Mat3X nom_s, Mat2X nom_u, const Mat3X& ref_s,
     std::optional<DUNE::Output> dune_out;
 
     if (points.cols() > 0) {
+      Stopwatch phase;
       const PointFlow pf = generatePointFlow(nom_s, points);
+      out.timing.point_flow_ms += phase.elapsedMs();
+      phase.restart();
       dune_out = dune_.forward(pf.point_flow, pf.R, pf.obs_points);
+      out.timing.dune_ms += phase.elapsedMs();
       out.min_distance = dune_out->min_distance;
       out.dune_points = pf.obs_points[0];
-      nrmp_.buildFaFb(dune_out->mu_list, dune_out->lam_list,
-                      dune_out->sort_point_list, fa_list, fb_list);
       out.nrmp_points = dune_out->sort_point_list[0].leftCols(
           std::min<int>(nrmp_.params().max_num,
                         static_cast<int>(dune_out->sort_point_list[0].cols())));
-    } else {
-      nrmp_.buildFaFb({}, {}, {}, fa_list, fb_list);
     }
 
+    const Stopwatch coefficients;
+    if (dune_out)
+      nrmp_.buildFaFb(dune_out->mu_list, dune_out->lam_list,
+                      dune_out->sort_point_list, fa_list, fb_list);
+    else
+      nrmp_.buildFaFb({}, {}, {}, fa_list, fb_list);
+    out.timing.coefficients_ms += coefficients.elapsedMs();
+
+    ++out.timing.iterations;
     const NRMP::Result res =
         nrmp_.solve(nom_s, nom_u, ref_s, ref_us, fa_list, fb_list, first);
-
+    out.timing.nrmp.total_ms += res.timing.total_ms;
+    out.timing.nrmp.assembly_ms += res.timing.assembly_ms;
+    out.timing.nrmp.setup_ms += res.timing.setup_ms;
+    out.timing.nrmp.solve_ms += res.timing.solve_ms;
+    out.timing.nrmp.postprocess_ms += res.timing.postprocess_ms;
     out.solver_status = res.status;
 
     // A non-converged OSQP solve can return a point that violates the hard
@@ -155,6 +170,7 @@ PAN::Output PAN::forward(Mat3X nom_s, Mat2X nom_u, const Mat3X& ref_s,
 
     if (stopCriteria(nom_s, nom_u, dune_out ? &*dune_out : nullptr)) break;
   }
+  out.timing.total_ms = total.elapsedMs();
   return out;
 }
 

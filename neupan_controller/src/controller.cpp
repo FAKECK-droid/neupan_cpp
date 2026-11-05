@@ -130,6 +130,9 @@ void NeupanController::configure(
       name + "/reference_path", rclcpp::QoS(1));
   optimized_pub_ = node->create_publisher<nav_msgs::msg::Path>(
       name + "/optimized_path", rclcpp::QoS(1));
+  const auto timing_topic = parameter(node, name + ".timing_topic", name + "/timing");
+  timing_pub_ = node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      timing_topic, rclcpp::SensorDataQoS().keep_last(1));
   speed_limit_ = nav2_costmap_2d::NO_SPEED_LIMIT;
   speed_limit_percentage_ = false;
   applySpeedLimit();
@@ -144,6 +147,10 @@ void NeupanController::activate() {
   planner_->reset();
   reference_pub_->on_activate();
   optimized_pub_->on_activate();
+  timing_pub_->on_activate();
+  timing_samples_ = 0;
+  timing_means_.fill(0.0);
+  timing_maxima_.fill(0.0);
   have_command_ = false;
   {
     std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
@@ -162,6 +169,7 @@ void NeupanController::deactivate() {
   points_sub_.reset();
   reference_pub_->on_deactivate();
   optimized_pub_->on_deactivate();
+  timing_pub_->on_deactivate();
   {
     std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
     cloud_.reset();
@@ -176,6 +184,7 @@ void NeupanController::cleanup() {
   planner_.reset();
   reference_pub_.reset();
   optimized_pub_.reset();
+  timing_pub_.reset();
   tf_.reset();
   path_ = nav_msgs::msg::Path{};
 }
@@ -292,6 +301,7 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     command.elapsed = continuing ? elapsed : control_period_;
     neupan::NeuPANPlanner::Info info;
     neupan::Vec2 action = planner_->forward(state, obstaclePoints(*cloud), info, command);
+    publishTiming(info);
     // Publish the actual solver inputs/results, not another copy of the global path.
     const auto publish_trajectory = [&](const auto& publisher, const neupan::Mat3X& states) {
       if (publisher->get_subscription_count() == 0) return;
@@ -429,6 +439,56 @@ rcl_interfaces::msg::SetParametersResult NeupanController::dynamicParametersCall
     result.reason = ex.what();
   }
   return result;
+}
+
+void NeupanController::publishTiming(const neupan::NeuPANPlanner::Info& info) {
+  const auto& t = info.timing;
+  const std::array<double, kTimingCount> values{
+      t.total_ms, t.reference_ms, t.pan.total_ms, t.pan.point_flow_ms,
+      t.pan.dune_ms, t.pan.coefficients_ms, t.pan.nrmp.total_ms,
+      t.pan.nrmp.assembly_ms, t.pan.nrmp.setup_ms, t.pan.nrmp.solve_ms,
+      t.pan.nrmp.postprocess_ms};
+  static constexpr std::array<const char*, kTimingCount> names{
+      "planner_total", "reference", "pan_total", "point_flow", "dune",
+      "nrmp_coefficients", "nrmp_total", "qp_assembly", "qp_setup", "qp_solve",
+      "nrmp_postprocess"};
+
+  ++timing_samples_;
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    timing_means_[i] += (values[i] - timing_means_[i]) /
+        static_cast<double>(timing_samples_);
+    timing_maxima_[i] = std::max(timing_maxima_[i], values[i]);
+  }
+  // Accumulate every completed core call, but serialize only when observed.
+  if (timing_pub_->get_subscription_count() == 0) return;
+
+  diagnostic_msgs::msg::DiagnosticArray message;
+  message.header.stamp = clock_->now();
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = name_ + "/timing";
+  status.hardware_id = "libneupan";
+  status.level = info.stop || (!info.solved && !info.arrive)
+      ? diagnostic_msgs::msg::DiagnosticStatus::WARN
+      : diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = info.stop ? "collision_stop"
+      : info.arrive ? "arrived" : info.solved ? "solved" : "solver_failed";
+  status.values.reserve(3 * values.size() + 3);
+  const auto add = [&](const std::string& key, const auto& value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = std::to_string(value);
+    status.values.push_back(std::move(item));
+  };
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    add(std::string(names[i]) + "_ms", values[i]);
+    add(std::string(names[i]) + "_mean_ms", timing_means_[i]);
+    add(std::string(names[i]) + "_max_ms", timing_maxima_[i]);
+  }
+  add("samples", timing_samples_);
+  add("pan_iterations", t.pan.iterations);
+  add("solver_status", info.solver_status);
+  message.status.push_back(std::move(status));
+  timing_pub_->publish(message);
 }
 
 void NeupanController::applySpeedLimit() {

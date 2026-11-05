@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "nav2_core/controller.hpp"
 #include "neupan/neupan_planner.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
@@ -43,6 +46,7 @@ class NeupanController : public nav2_core::Controller {
   rcl_interfaces::msg::SetParametersResult dynamicParametersCallback(
       const std::vector<rclcpp::Parameter>& parameters);
   void applySpeedLimit();
+  void publishTiming(const neupan::NeuPANPlanner::Info& info);
   neupan::Mat2X obstaclePoints(const sensor_msgs::msg::PointCloud2& cloud) const;
 
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
@@ -53,6 +57,11 @@ class NeupanController : public nav2_core::Controller {
   sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_;
   rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr reference_pub_;
   rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr optimized_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr timing_pub_;
+  static constexpr std::size_t kTimingCount = 11;
+  std::array<double, kTimingCount> timing_means_{};
+  std::array<double, kTimingCount> timing_maxima_{};
+  std::uint64_t timing_samples_ = 0;
   nav_msgs::msg::Path path_;
   std::string name_;
   std::string points_topic_;

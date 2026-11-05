@@ -89,6 +89,7 @@ Scout 配置包含匹配模型、1 秒预测时域和缩小的目标间距，模
 投影模式保存最近线段进度，按路径弧长生成参考轨迹；发布 reference_path / optimized_path 供 RViz 核对。
 Scout 线速度上限与实车下游限速对齐为 0.3 m/s，避免独立裁剪线速度改变转弯曲率。
 插件保留路径末点 yaw，由 MPC 统一控制终点位置与朝向；没有额外的旋转状态机，Nav2 按容差判定完成。
+核心提供各阶段单调时钟计时；插件通过 FollowPath/timing 发布本周期、均值及最大值（毫秒），含 PAN 轮数和求解状态。
 话题、参数、模型轮廓匹配、接入与测试见插件文档和
 [参数示例](neupan_controller/config/neupan_controller.yaml)。
 另提供 [TurtleBot3 Waffle 官方仿真接入与 GPU 训练](neupan_controller/TURTLEBOT3.md)：

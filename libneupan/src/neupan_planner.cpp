@@ -11,6 +11,7 @@
  */
 
 #include "neupan/neupan_planner.hpp"
+#include "neupan/timing.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -158,15 +159,20 @@ NeuPANPlanner NeuPANPlanner::fromYaml(const std::string& yaml_path,
 
 Vec2 NeuPANPlanner::forward(const Vec3& state, const Mat2X& points,
                             Info& info, const std::optional<Command>& command) {
+  const Stopwatch total;
   info = Info{};
+  const Stopwatch reference;
 
   if (ipath_.checkArrive(state)) {
     info.arrive = true;
+    info.timing.reference_ms = reference.elapsedMs();
+    info.timing.total_ms = total.elapsedMs();
     return Vec2::Zero();
   }
 
   const InitialPath::NomRef nom =
       ipath_.generateNomRefState(state, cur_vel_array_, ref_speed_);
+  info.timing.reference_ms = reference.elapsedMs();
 
   std::optional<NRMP::Box> first;
   if (command) first = firstInputBox(*command, nom.nom_u(1, 0));
@@ -174,6 +180,7 @@ Vec2 NeuPANPlanner::forward(const Vec3& state, const Mat2X& points,
                                        nom.ref_us, points, first);
 
   cur_vel_array_ = out.opt_u;
+  info.timing.pan = out.timing;
 
   info.solved = out.solved;
   info.solver_status = out.solver_status;
@@ -186,6 +193,7 @@ Vec2 NeuPANPlanner::forward(const Vec3& state, const Mat2X& points,
 
   if (out.min_distance < cfg_.collision_threshold) {
     info.stop = true;
+    info.timing.total_ms = total.elapsedMs();
     return Vec2::Zero();
   }
 
@@ -194,9 +202,10 @@ Vec2 NeuPANPlanner::forward(const Vec3& state, const Mat2X& points,
   const Vec2 u = out.opt_u.col(0)
                      .cwiseMax(-robot_.max_speed)
                      .cwiseMin(robot_.max_speed);
-  if (robot_.kinematics == Kinematics::Omni)
-    return Vec2(u(0) * std::cos(u(1)), u(0) * std::sin(u(1)));
-  return u;
+  const Vec2 action = robot_.kinematics == Kinematics::Omni
+      ? Vec2(u(0) * std::cos(u(1)), u(0) * std::sin(u(1))) : u;
+  info.timing.total_ms = total.elapsedMs();
+  return action;
 }
 
 NRMP::Box NeuPANPlanner::firstInputBox(const Command& command,

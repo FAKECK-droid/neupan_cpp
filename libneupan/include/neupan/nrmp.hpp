@@ -51,7 +51,16 @@ class NRMP {
   NRMP(NRMP&&) noexcept;
   NRMP& operator=(NRMP&&) noexcept;
 
+  struct Timing {
+    double total_ms = 0.0;
+    double assembly_ms = 0.0;
+    double setup_ms = 0.0;  // OSQP initialization or in-place update
+    double solve_ms = 0.0;
+    double postprocess_ms = 0.0;  // solution extraction and objective evaluation
+  };
+
   struct Result {
+    Timing timing;
     Mat3X s;           // (3, T+1)
     Mat2X u;           // (2, T)
     Vec d;             // (T,)

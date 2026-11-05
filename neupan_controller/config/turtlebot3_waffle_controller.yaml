@@ -5,6 +5,7 @@ controller_server:
     FollowPath:
       plugin: neupan_controller::NeupanController
       points_topic: scan/points
+      timing_topic: FollowPath/timing
       pointcloud_timeout: 0.5
       min_obstacle_height: 0.02
       max_obstacle_height: 0.35

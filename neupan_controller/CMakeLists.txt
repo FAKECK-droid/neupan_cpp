@@ -11,6 +11,7 @@ find_package(nav2_costmap_2d REQUIRED)
 find_package(nav2_util REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rcl_interfaces REQUIRED)
@@ -28,7 +29,7 @@ target_include_directories(neupan_controller PUBLIC
 target_link_libraries(neupan_controller neupan::neupan)
 ament_target_dependencies(neupan_controller
   ament_index_cpp nav2_core nav2_costmap_2d nav2_util nav_msgs geometry_msgs
-  sensor_msgs pluginlib rcl_interfaces rclcpp rclcpp_lifecycle tf2 tf2_ros tf2_geometry_msgs)
+  sensor_msgs diagnostic_msgs pluginlib rcl_interfaces rclcpp rclcpp_lifecycle tf2 tf2_ros tf2_geometry_msgs)
 target_compile_options(neupan_controller PRIVATE -Wall -Wextra -Wpedantic)
 pluginlib_export_plugin_description_file(nav2_core neupan_controller.xml)
 
@@ -74,6 +75,6 @@ endif()
 
 ament_export_targets(neupan_controllerTargets HAS_LIBRARY_TARGET)
 ament_export_dependencies(libneupan nav2_core nav2_costmap_2d nav2_util nav_msgs
-  geometry_msgs sensor_msgs pluginlib rcl_interfaces rclcpp rclcpp_lifecycle tf2 tf2_ros
+  geometry_msgs sensor_msgs diagnostic_msgs pluginlib rcl_interfaces rclcpp rclcpp_lifecycle tf2 tf2_ros
   tf2_geometry_msgs ament_index_cpp)
 ament_package()
