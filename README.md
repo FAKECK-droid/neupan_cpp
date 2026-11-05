@@ -82,12 +82,13 @@ python tools/export_dune_weights.py model_5000.pth your_robot.bin your_planner.y
 全局路径由 planner_server 生成，经 BT / FollowPath 传给插件；障碍输入为 PointCloud2。
 插件不读取局部栅格；通用参数示例将 Nav2 内部 local_costmap 配置为空图层容器，提供 TF 与未加 padding 的轮廓。
 包内 `neupan_controller_server` 入口为原生 Nav2 server 设置带类型的空图层参数，规避 Humble 的 YAML 空数组问题。
-支持通过 ROS 2 参数服务动态更新速度、避障权重/距离、点云筛选和终点转向增益；
+支持通过 ROS 2 参数服务动态更新速度、避障权重/距离、点云筛选和跟踪权重；
 模型、话题和预测时域等初始化参数需 cleanup/configure 后修改。
 连续控制的首步加速度约束跟随上一条输出命令，避免低速里程计反馈把起步锁死；
 Scout 配置包含匹配模型、1 秒预测时域和缩小的目标间距，模型支持包内相对路径。
 投影模式保存最近线段进度，按路径弧长生成参考轨迹；发布 reference_path / optimized_path 供 RViz 核对。
 Scout 线速度上限与实车下游限速对齐为 0.3 m/s，避免独立裁剪线速度改变转弯曲率。
+插件保留路径末点 yaw，由 MPC 统一控制终点位置与朝向；没有额外的旋转状态机，Nav2 按容差判定完成。
 话题、参数、模型轮廓匹配、接入与测试见插件文档和
 [参数示例](neupan_controller/config/neupan_controller.yaml)。
 另提供 [TurtleBot3 Waffle 官方仿真接入与 GPU 训练](neupan_controller/TURTLEBOT3.md)：

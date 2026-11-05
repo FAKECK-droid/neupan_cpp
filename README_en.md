@@ -81,11 +81,13 @@ grid costs. The generic parameter example retains an empty local_costmap contain
 for TF and the unpadded footprint. The included `neupan_controller_server` entry point sets typed empty
 layer arrays on the native server, avoiding Humble's empty-array YAML parsing issue.
 ROS 2 parameter callbacks support runtime speed, avoidance weight/margin, point-cloud
-filter and final rotation gain updates. Model, topic and horizon initialization
+filter and tracking-weight updates. Model, topic and horizon initialization
 parameters require cleanup/configure.
 Projected references persist the nearest segment and advance by polyline arc length.
 The plugin publishes reference_path / optimized_path for RViz inspection. The Scout linear
 limit is 0.3 m/s to match the downstream limiter and avoid changing planned turning curvature.
+The plugin retains the supplied final yaw and lets MPC control both position and heading.
+There is no separate rotation state machine; Nav2 checks the final pose tolerances.
 Consecutive first-input acceleration bounds follow the previous output command so
 lagging low-speed odometry cannot pin startup. The Scout profile includes its matching
 model, a 1 s horizon and a smaller target clearance; model paths may be package-relative.

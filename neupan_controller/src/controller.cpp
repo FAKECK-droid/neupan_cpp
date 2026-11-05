@@ -84,7 +84,6 @@ void NeupanController::configure(
   params_.max_height = parameter(node, name + ".max_obstacle_height", 1.5);
   params_.min_range = parameter(node, name + ".min_obstacle_range", 0.0);
   params_.max_range = parameter(node, name + ".max_obstacle_range", 10.0);
-  params_.rotate_to_goal_gain = parameter(node, name + ".rotate_to_goal_gain", 2.0);
 
   neupan::NeuPANPlanner::Config cfg;
   cfg.receding = parameter(node, name + ".receding", 10);
@@ -107,8 +106,9 @@ void NeupanController::configure(
   if (std::filesystem::path(cfg.dune_checkpoint).is_relative())
     cfg.dune_checkpoint = package_share + "/" + cfg.dune_checkpoint;
   cfg.ipath.projected_reference = true;
-  // Nav2 owns arrival tolerances. Keep the core evaluating obstacle clearance
-  // during final rotation instead of latching its position-only arrival flag.
+  cfg.ipath.use_goal_orientation = true;
+  // MPC tracks the final pose. Nav2 alone decides arrival; keep evaluating
+  // clearance and optimizing both inputs until its goal checker succeeds.
   cfg.ipath.arrive_threshold = 0.0;
   cfg.ipath.interval = parameter(node, name + ".ipath.interval", 0.05);
   cfg.ipath.close_threshold = parameter(node, name + ".ipath.close_threshold", 0.1);
@@ -144,7 +144,6 @@ void NeupanController::activate() {
   planner_->reset();
   reference_pub_->on_activate();
   optimized_pub_->on_activate();
-  rotating_to_goal_ = false;
   have_command_ = false;
   {
     std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
@@ -185,7 +184,6 @@ void NeupanController::setPlan(const nav_msgs::msg::Path& path) {
   std::lock_guard<std::mutex> lock(mutex_);
   path_ = path;
   new_plan_ = true;
-  rotating_to_goal_ = false;
 }
 
 neupan::Mat2X NeupanController::obstaclePoints(
@@ -236,7 +234,7 @@ neupan::Mat2X NeupanController::obstaclePoints(
 
 geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped& pose,
-    const geometry_msgs::msg::Twist& velocity, nav2_core::GoalChecker* goal_checker) {
+    const geometry_msgs::msg::Twist& velocity, nav2_core::GoalChecker*) {
   std::lock_guard<std::mutex> lock(mutex_);
   const auto cycle_start = std::chrono::steady_clock::now();
   try {
@@ -331,24 +329,6 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
       throw nav2_core::PlannerException(
           "NeuPAN solver failed, status " + std::to_string(info.solver_status));
 
-    geometry_msgs::msg::Pose tolerance;
-    geometry_msgs::msg::Twist velocity_tolerance;
-    if (!goal_checker->getTolerances(tolerance, velocity_tolerance))
-      throw nav2_core::PlannerException("Goal checker does not provide tolerances");
-    const auto& goal = path_.poses.back().pose;
-    rotating_to_goal_ = rotating_to_goal_ ||
-        std::hypot(state.x() - goal.position.x, state.y() - goal.position.y) <=
-            tolerance.position.x;
-    if (rotating_to_goal_) {
-      const double error = neupan::wrapToPi(tf2::getYaw(goal.orientation) - state.z());
-      const double max_w = planner_->config().max_speed.y();
-      const double dw = planner_->config().max_acce.y() *
-          std::min(command.elapsed, planner_->config().step_time);
-      const double desired = std::abs(error) <= tf2::getYaw(tolerance.orientation)
-          ? 0.0 : std::clamp(params_.rotate_to_goal_gain * error, -max_w, max_w);
-      action << 0.0, std::clamp(desired, command.action.y() - dw, command.action.y() + dw);
-    }
-
     // This is Nav2's external speed limit; the core already enforces its own box.
     if (std::abs(action.x()) > linear_speed_limit_)
       action *= linear_speed_limit_ / std::abs(action.x());
@@ -390,8 +370,7 @@ rcl_interfaces::msg::SetParametersResult NeupanController::dynamicParametersCall
           updateParameter(parameter, name, "min_obstacle_height", next.min_height) ||
           updateParameter(parameter, name, "max_obstacle_height", next.max_height) ||
           updateParameter(parameter, name, "min_obstacle_range", next.min_range, 0.0) ||
-          updateParameter(parameter, name, "max_obstacle_range", next.max_range, 0.0) ||
-          updateParameter(parameter, name, "rotate_to_goal_gain", next.rotate_to_goal_gain, 0.0)) {
+          updateParameter(parameter, name, "max_obstacle_range", next.max_range, 0.0)) {
         changed = true;
         continue;
       }

@@ -64,14 +64,17 @@ std::vector<InitialPath::PathPoint> InitialPath::generateLineCurve(
     curve.emplace_back(ep.x(), ep.y(), waypoints[i + 1].z(), 1.0);
   }
 
-  // _ensure_consistent_angles: theta = direction to the next point,
-  // last point copies the second to last.
+  // _ensure_consistent_angles: intermediate headings follow the path tangent.
+  // Pose tracking can retain the supplied final yaw as the terminal reference.
   for (size_t i = 0; i + 1 < curve.size(); ++i) {
     const double dx = curve[i + 1].x() - curve[i].x();
     const double dy = curve[i + 1].y() - curve[i].y();
     curve[i](2) = std::atan2(dy, dx);
   }
-  if (curve.size() >= 2) curve[curve.size() - 1](2) = curve[curve.size() - 2](2);
+  if (opts_.use_goal_orientation)
+    curve.back()(2) = waypoints.back().z();
+  else if (curve.size() >= 2)
+    curve.back()(2) = curve[curve.size() - 2](2);
 
   return curve;
 }
@@ -175,7 +178,10 @@ bool InitialPath::checkCurveArrive(const Vec3& state) const {
   const auto& curve = curCurve();
   const double arrive_distance =
       (state.head<2>() - curve.back().head<2>()).norm();
-  return arrive_distance < opts_.arrive_threshold &&
+  const bool yaw_reached = !opts_.use_goal_orientation ||
+      robot_.kinematics == Kinematics::Omni ||
+      std::abs(wrapToPi(state.z() - curve.back()(2))) < opts_.arrive_yaw_threshold;
+  return arrive_distance < opts_.arrive_threshold && yaw_reached &&
          point_index_ >= static_cast<int>(curve.size()) -
                              opts_.arrive_index_threshold - 2;
 }

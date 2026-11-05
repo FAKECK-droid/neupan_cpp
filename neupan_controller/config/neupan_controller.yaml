@@ -20,7 +20,7 @@ controller_server:
       plugin: nav2_controller::SimpleGoalChecker
       xy_goal_tolerance: 0.1
       yaw_goal_tolerance: 0.1
-      stateful: true
+      stateful: false  # Check current position and yaw together on every cycle.
     FollowPath:
       plugin: neupan_controller::NeupanController
       # Runtime tuning is supported; see README for the full list.
@@ -45,7 +45,6 @@ controller_server:
       max_speed: [0.3, 1.0]   # [m/s, rad/s]
       max_acce: [1.0, 2.0]    # [m/s^2, rad/s^2]
       collision_threshold: 0.1
-      rotate_to_goal_gain: 2.0
       ipath:
         interval: 0.05
         close_threshold: 0.1

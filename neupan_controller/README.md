@@ -25,9 +25,15 @@ Nav2 返回单个目标 pose 时，仅补入当前 pose 以适配库的外部路
   不额外声明 length/width/vertices。轮廓固定于 configure 时；更换轮廓和模型后需重新 configure。
 - 输出：返回 `TwistStamped`，由 Humble controller_server 发布 `cmd_vel`
   （`geometry_msgs/msg/Twist`）；插件不自行发布底盘命令。
-- 到达：Nav2 goal checker 负责。库的位置到达锁存关闭，接近终点后按 goal checker 的 XY/yaw
-  容差做原地转向；仍每周期调用库检查当前障碍距离并要求求解成功。转向角速度受
-  `max_speed[1]` 和 `max_acce[1]` 约束。这里复用库的当前距离急停，不另加旋转扫掠碰撞检测。
+- 终点控制：MPC 统一输出 v/w。插件启用库的 ipath.use_goal_orientation，保留输入路径末点 yaw，
+  中间参考仍沿路径切线；预测参考到达末点后，后续状态保持目标位姿、参考线速度为零。
+  yaw 误差沿用库已有的角度展开和 q_s[2] 代价，速度/加速度约束和障碍检查继续由库处理。
+  插件没有终点旋转状态机，也不根据位置阈值覆盖 v/w。
+- 到达：Nav2 goal checker 按实际位置和朝向判断并停车，库的到达锁存关闭。
+  SimpleGoalChecker 配置 stateful: false，每周期同时检查当前 XY/yaw，避免先锁存位置成功后
+  车辆在对齐朝向时移出位置容差仍被判定完成。Scout 示例及 TurtleBot3 启动入口已采用此配置。
+  MPC 仍使用软跟踪代价，没有增加终端位姿等式约束或到达保证；约束不可行、局部最优、
+  反馈误差等仍可能使任务失败。没有增加旋转扫掠碰撞检测。
 
 ## TurtleBot3 官方仿真与 GPU 训练
 
@@ -140,13 +146,12 @@ NaN/Inf 丢弃；地面、顶棚和车体自反射应通过高度参数及上游
 | `max_speed` | [0.8, 1.0] | [线速度, 角速度] 上限 |
 | `max_acce` | [1.0, 2.0] | [线加速度, 角加速度] 上限 |
 | `collision_threshold` | 0.1 m | 库的当前障碍距离急停阈值 |
-| `rotate_to_goal_gain` | 2.0 | 终点转向比例增益 |
 | `ipath.interval / close_threshold / ind_range` | 0.05 / 0.1 / 10 | 库的路径采样与进度搜索 |
 | `pan.*`、`adjust.*` | 见 YAML | 直接映射库的 PAN/NRMP 参数 |
 
 `transform_tolerance`、`robot_base_frame` 复用 local_costmap 配置，
 `controller_frequency`、`failure_tolerance`、`odom_topic` 为 controller_server 参数，
-XY/yaw 容差由 goal_checker 配置，要求 goal checker 支持 `getTolerances()`（例如 SimpleGoalChecker）。
+XY/yaw 完成容差由 goal_checker 配置，插件不读取或修改其内部状态。
 
 Nav2 SpeedLimit 的绝对值单位为 m/s，百分比相对于配置的最大线速度，
 0 恢复配置上限。限制会降低参考速度，并在必要时同比缩放 v/w 保持曲率。
@@ -169,7 +174,7 @@ ipath.ind_range 仍限制邻近搜索窗口（点数）；close_threshold 仅影
 仅有订阅者时组装消息，QoS 为 reliable/volatile、depth 1。
 参考轨迹应从机器人在全局路径附近的投影位置向前延伸；优化轨迹从当前机器人位置开始。
 优化轨迹在碰撞停止或求解失败时也会发布供诊断，此时不能把它当作已执行的轨迹。
-它也不包含 Nav2 恢复动作、终点转向覆盖和下游速度平滑器的输出。
+它也不包含 Nav2 恢复动作和下游速度平滑器的输出。
 controller_server 使用 DEBUG 日志时，每秒报告位姿、投影段索引、参考末端、目标和求解状态。
 
 Scout 示例的 ref_speed 和 max_speed[0] 均设为 0.3 m/s，与实车导航的
@@ -203,6 +208,12 @@ TurtleBot3 覆盖配置也调整 p_u/eta，仍保留自身轮廓与距离阈值�
 若仍停止，先区分明确的碰撞/TF/点云/求解错误与求解成功但速度很小，
 不要通过关闭碰撞检查处理起步问题。
 
+核心库的独立 YAML 可设置 `ipath.use_goal_orientation: true` 保留终点 yaw；
+启用后，差速到达判断同时检查 `ipath.arrive_yaw_threshold`（默认 0.1 rad）。
+为保留原有行为，这一核心库选项默认关闭。Nav2 插件固定开启它，最终完成仍由 Nav2 判定。
+旧参数 `rotate_to_goal_gain` 已删除，应从调用方 YAML 移除；终点朝向权重使用
+`adjust.q_s[2]`。只调整这一权重不能保证任意位置/朝向目标均收敛。
+
 ## 动态调参
 
 在 configure 后注册参数回调，cleanup 时移除；active 和 inactive 状态都支持下表中的动态参数。
@@ -212,7 +223,6 @@ TurtleBot3 覆盖配置也调整 p_u/eta，仍保留自身轮廓与距离阈值�
 | 参数 | 更新方式 |
 |---|---|
 | `pointcloud_timeout`、`min_obstacle_height`、`max_obstacle_height`、`min_obstacle_range`、`max_obstacle_range` | 直接更新，下一控制周期采用新筛选条件 |
-| `rotate_to_goal_gain` | 直接更新，下一控制周期采用新增益 |
 | `ref_speed` | 调用库的 setReferenceSpeed，保留当前规划状态 |
 | `max_speed`、`max_acce`、`collision_threshold` | 按新配置重建核心规划器 |
 | `ipath.close_threshold`、`ipath.ind_range` | 重建核心规划器；插件使用投影模式，close_threshold 不影响其进度搜索 |
