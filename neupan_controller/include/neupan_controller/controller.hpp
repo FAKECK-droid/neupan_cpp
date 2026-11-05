@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -63,8 +64,13 @@ class NeupanController : public nav2_core::Controller {
   bool speed_limit_percentage_ = false;
   bool new_plan_ = false;
   bool rotating_to_goal_ = false;
+  neupan::Vec2 last_command_ = neupan::Vec2::Zero();
+  std::chrono::steady_clock::time_point command_time_;
+  bool have_command_ = false;
   // FollowPath runs on the action server's thread; subscriptions run separately.
   std::mutex mutex_;
+  // Receiving the newest cloud must not wait for TF lookups or optimization.
+  std::mutex cloud_mutex_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_callback_;
 };
 

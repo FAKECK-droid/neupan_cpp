@@ -57,6 +57,8 @@ install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE)
 install(FILES ${libneupan_MODELS_DIR}/diff_default.bin
   DESTINATION share/${PROJECT_NAME}/models)
+install(DIRECTORY models/ DESTINATION share/${PROJECT_NAME}/models
+  FILES_MATCHING PATTERN "*.bin")
 install(FILES README.md TURTLEBOT3.md DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)

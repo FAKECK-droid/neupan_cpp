@@ -83,6 +83,9 @@ layer arrays on the native server, avoiding Humble's empty-array YAML parsing is
 ROS 2 parameter callbacks support runtime speed, avoidance weight/margin, point-cloud
 filter and final rotation gain updates. Model, topic and horizon initialization
 parameters require cleanup/configure.
+Consecutive first-input acceleration bounds follow the previous output command so
+lagging low-speed odometry cannot pin startup. The Scout profile includes its matching
+model, a 1 s horizon and a smaller target clearance; model paths may be package-relative.
 See the plugin documentation and
 [parameter example](neupan_controller/config/neupan_controller.yaml) for topics,
 configuration, model/footprint matching, integration and tests.

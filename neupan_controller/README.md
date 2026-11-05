@@ -16,8 +16,11 @@ Nav2 返回单个目标 pose 时，仅补入当前 pose 以适配库的外部路
 
 - 位姿：controller_server 从其 Costmap2DROS 的 TF 获取，并传入
   `computeVelocityCommands(pose, velocity, goal_checker)`。插件把位姿变换到全局路径坐标系。
-- 速度：controller_server 从 `odom_topic` 获取；插件用传入的实际
-  `linear.x/angular.z` 和一个控制周期构造库的 `Command`，约束下一步加速度。
+- 速度：controller_server 从 `odom_topic` 获取。首次计算或控制中断超过一个预测时域时，
+  用实际 `linear.x/angular.z` 初始化库的 `Command`；连续控制时相对上一条输出命令限加速度，
+  时间间隔取 steady clock 的控制周期间隔。周期性 setPlan 不清空命令历史。
+  如果每轮都重新以滞后的里程计为中心，底盘未响应时命令会被锁在 max_acce / frequency 附近。
+  异常停车会把命令历史归零，重新配置规划器后重新从实测速度初始化。
 - 轮廓：configure 时调用 `getUnpaddedRobotFootprint()`，转换为库的凸多边形。
   不额外声明 length/width/vertices。轮廓固定于 configure 时；更换轮廓和模型后需重新 configure。
 - 输出：返回 `TwistStamped`，由 Humble controller_server 发布 `cmd_vel`
@@ -64,7 +67,8 @@ ros2 run neupan_controller neupan_controller_server --ros-args --params-file /ab
 示例文件是控制器配置片段，不是完整 Nav2 bringup 配置。
 
 Humble 的 controller_server 在内部创建、configure/activate local_costmap，不能只靠
-Controller 插件把该节点完全移除。示例保留一个很小的空容器，`publish_frequency: 0.0`；
+Controller 插件把该节点完全移除。示例保留一个很小的空容器；`publish_frequency: 0.0`
+可关闭栅格发布，当前配置为 1 Hz，方便检查容器和轮廓；
 随包的 `neupan_controller_server` 只继承原生 ControllerServer，在构造后把
 `plugins` / `filters` 设置为带类型的空 string array，不覆盖任何控制、action 或生命周期方法。
 这是因为本机 Humble 无法把 YAML 的 `[]` 解析为有类型的空数组，会在创建节点时报
@@ -76,9 +80,11 @@ Controller 插件把该节点完全移除。示例保留一个很小的空容器
 插件也可以由标准 `nav2_controller/controller_server` 加载，但其 costmap 图层需要由调用方配置；
 本包的小入口用于保证完全不加载局部栅格图层。
 
-示例轮廓 **1.6 × 2.0 m** 严格匹配自带 `diff_default.bin`，用于验证接入，
-不是 Scout Mini 尺寸。实际使用时同时改 `local_costmap.footprint` 和
-`FollowPath.dune_checkpoint`，使用按真实底盘训练、导出的 NPTF `.bin`。
+当前配置示例使用 **0.627 × 0.549 m** 的 Scout Mini 轮廓，与包内
+`models/scout_mini_waffle/scout_mini.bin` 的训练顶点顺序一致。
+CMake 会安装该模型；相对 `dune_checkpoint` 从本包 share 目录解析，跨设备不需要写死用户目录。
+省略模型参数时，插件的兼容默认值仍为 `diff_default.bin`，它对应 1.6 × 2.0 m 示例轮廓。
+更换底盘时同时改 `local_costmap.footprint` 和 `FollowPath.dune_checkpoint`。
 库会检查模型和轮廓的矩阵一致性；请保留训练时的顶点顺序，不能只保证多边形看起来相同。
 `robot_radius` 生成的圆近似轮廓也必须有对应训练模型。默认读取未加 padding 的轮廓，
 安全距离使用 `collision_threshold` 和 `adjust.d_min/d_max`。
@@ -125,7 +131,7 @@ NaN/Inf 丢弃；地面、顶棚和车体自反射应通过高度参数及上游
 | `pointcloud_timeout` | 0.5 s | 消息最大年龄 |
 | `min_obstacle_height / max_obstacle_height` | 0.05 / 1.5 m | 车体系 Z 范围 |
 | `min_obstacle_range / max_obstacle_range` | 0 / 10 m | 车体系 XY 范围 |
-| `dune_checkpoint` | 包内 `models/diff_default.bin` | NPTF 权重绝对路径 |
+| `dune_checkpoint` | 包内 `models/diff_default.bin` | NPTF 权重；绝对路径或相对于包 share 的路径 |
 | `receding` | 10 | MPC 步数 |
 | `step_time` | 1 / controller_frequency | MPC 步长 |
 | `ref_speed` | 0.5 m/s | 参考速度 |
@@ -148,6 +154,25 @@ Nav2 SpeedLimit 的绝对值单位为 m/s，百分比相对于配置的最大线
 Humble controller_server 按 `failure_tolerance` 发送零速度并等待恢复或终止 FollowPath。
 插件不增加失败计数、重试求解、自己的定时控制循环或全局规划回退。
 
+## 起步与停滞修复
+
+插件沿用原 C++ ROS 封装的命令历史语义：首步加速度约束相对上一条输出，
+而不是每轮重新钉在可能接近零的里程计读数上。实际位姿仍由 TF 反馈。
+点云缓存使用独立互斥锁，订阅回调不再被 TF 等待和优化求解阻塞，
+同时避免阻塞 controller_server 默认回调组中的里程计等回调。
+
+Scout 配置的预测时域由 0.5 s 调为 1 s，维持 10 步和 20 Hz 控制频率；
+p_u=2、eta=1、d_max=0.3 m，避免在低速短前视下持续追求 1 m 间距而偏好原地停住。
+d_min、碰撞停止距离、速度和加速度上限保留。点云最大距离设为 3.5 m，
+与当前 Scout 模型的训练点范围 [-5, 5] m 及预测位移相容。
+TurtleBot3 覆盖配置也调整 p_u/eta，仍保留自身轮廓与距离阈值。
+这些是根据代码与上游建议确定的初始值，开发板离线期间仅编译，未做硬件或仿真验证。
+
+上游维护者对 d_max 过大、p_u 偏小造成停滞的说明：
+[NeuPAN issue #43](https://github.com/hanruihua/NeuPAN/issues/43)。
+若仍停止，先区分明确的碰撞/TF/点云/求解错误与求解成功但速度很小，
+不要通过关闭碰撞检查处理起步问题。
+
 ## 动态调参
 
 在 configure 后注册参数回调，cleanup 时移除；active 和 inactive 状态都支持下表中的动态参数。
@@ -167,7 +192,7 @@ Humble controller_server 按 `failure_tolerance` 发送零速度并等待恢复�
 参考速度和 adjust 参数复用库已有的更新、校验接口，不重新加载模型。
 其余表中标记为重建的参数，使用库构造接口重建规划器，重新加载模型并清空求解 warm start，
 但保留收到的 Nav2 全局路径，
-下一周期由库投影当前位置恢复路径进度；第一步仍使用实际里程计速度约束加速度。
+下一周期由库投影当前位置恢复路径进度，并用实测速度重新初始化命令历史。
 最近收到的 Nav2 SpeedLimit 会重新应用，百分比限速以更新后的最大线速度为基准。
 
 例如：

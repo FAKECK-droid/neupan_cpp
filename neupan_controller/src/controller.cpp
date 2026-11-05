@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
@@ -99,10 +100,12 @@ void NeupanController::configure(
   cfg.vertices.resize(2, footprint.size());
   for (size_t i = 0; i < footprint.size(); ++i)
     cfg.vertices.col(i) << footprint[i].x, footprint[i].y;
+  const auto package_share =
+      ament_index_cpp::get_package_share_directory("neupan_controller");
   cfg.dune_checkpoint = parameter(
-      node, name + ".dune_checkpoint",
-      ament_index_cpp::get_package_share_directory("neupan_controller") +
-          "/models/diff_default.bin");
+      node, name + ".dune_checkpoint", package_share + "/models/diff_default.bin");
+  if (std::filesystem::path(cfg.dune_checkpoint).is_relative())
+    cfg.dune_checkpoint = package_share + "/" + cfg.dune_checkpoint;
   cfg.ipath.projected_reference = true;
   // Nav2 owns arrival tolerances. Keep the core evaluating obstacle clearance
   // during final rotation instead of latching its position-only arrival flag.
@@ -136,11 +139,15 @@ void NeupanController::activate() {
   std::lock_guard<std::mutex> lock(mutex_);
   planner_->reset();
   rotating_to_goal_ = false;
-  cloud_.reset();
+  have_command_ = false;
+  {
+    std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
+    cloud_.reset();
+  }
   points_sub_ = node_.lock()->create_subscription<sensor_msgs::msg::PointCloud2>(
       points_topic_, rclcpp::SensorDataQoS().keep_last(1),
       [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
-        std::lock_guard<std::mutex> cloud_lock(mutex_);
+        std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
         cloud_ = std::move(msg);
       });
 }
@@ -148,7 +155,11 @@ void NeupanController::activate() {
 void NeupanController::deactivate() {
   std::lock_guard<std::mutex> lock(mutex_);
   points_sub_.reset();
-  cloud_.reset();
+  {
+    std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
+    cloud_.reset();
+  }
+  have_command_ = false;
   planner_->reset();
 }
 
@@ -217,10 +228,16 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped& pose,
     const geometry_msgs::msg::Twist& velocity, nav2_core::GoalChecker* goal_checker) {
   std::lock_guard<std::mutex> lock(mutex_);
+  const auto cycle_start = std::chrono::steady_clock::now();
   try {
-    if (!cloud_) throw nav2_core::PlannerException("Waiting for PointCloud2");
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud;
+    {
+      std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
+      cloud = cloud_;
+    }
+    if (!cloud) throw nav2_core::PlannerException("Waiting for PointCloud2");
     const double age = (clock_->now() -
-        rclcpp::Time(cloud_->header.stamp, clock_->get_clock_type())).seconds();
+        rclcpp::Time(cloud->header.stamp, clock_->get_clock_type())).seconds();
     if (age > params_.pointcloud_timeout)
       throw nav2_core::PlannerException(
           "PointCloud2 is stale: age=" + std::to_string(age) +
@@ -253,11 +270,20 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
       new_plan_ = false;
     }
 
+    // Command bounds must advance from the command stream, as in neupan_cpp_ros.
+    // Re-centering on lagging odometry every cycle can pin startup at a_max / Hz.
+    // Initialize from odometry only at startup or after a full prediction-horizon gap.
+    const double elapsed = have_command_
+        ? std::chrono::duration<double>(cycle_start - command_time_).count()
+        : control_period_;
+    const auto& cfg = planner_->config();
+    const bool continuing = have_command_ && elapsed <= cfg.receding * cfg.step_time;
     neupan::NeuPANPlanner::Command command;
-    command.action << velocity.linear.x, velocity.angular.z;
-    command.elapsed = control_period_;
+    command.action = continuing ? last_command_
+        : neupan::Vec2(velocity.linear.x, velocity.angular.z);
+    command.elapsed = continuing ? elapsed : control_period_;
     neupan::NeuPANPlanner::Info info;
-    neupan::Vec2 action = planner_->forward(state, obstaclePoints(*cloud_), info, command);
+    neupan::Vec2 action = planner_->forward(state, obstaclePoints(*cloud), info, command);
     if (info.stop)
       throw nav2_core::PlannerException(
           "NeuPAN collision stop: distance=" + std::to_string(info.min_distance) +
@@ -278,10 +304,10 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
       const double error = neupan::wrapToPi(tf2::getYaw(goal.orientation) - state.z());
       const double max_w = planner_->config().max_speed.y();
       const double dw = planner_->config().max_acce.y() *
-          std::min(control_period_, planner_->config().step_time);
+          std::min(command.elapsed, planner_->config().step_time);
       const double desired = std::abs(error) <= tf2::getYaw(tolerance.orientation)
           ? 0.0 : std::clamp(params_.rotate_to_goal_gain * error, -max_w, max_w);
-      action << 0.0, std::clamp(desired, velocity.angular.z - dw, velocity.angular.z + dw);
+      action << 0.0, std::clamp(desired, command.action.y() - dw, command.action.y() + dw);
     }
 
     // This is Nav2's external speed limit; the core already enforces its own box.
@@ -292,9 +318,15 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     output.header.frame_id = base_frame_;
     output.twist.linear.x = action.x();
     output.twist.angular.z = action.y();
+    last_command_ = action;
+    command_time_ = cycle_start;
+    have_command_ = true;
     return output;
   } catch (const std::exception& ex) {
-    // Humble's controller_server handles PlannerException via failure_tolerance.
+    // Humble publishes zero on this failure. Do not resume from a pre-stop command.
+    last_command_.setZero();
+    command_time_ = cycle_start;
+    have_command_ = true;
     throw nav2_core::PlannerException(ex.what());
   }
 }
@@ -363,6 +395,7 @@ rcl_interfaces::msg::SetParametersResult NeupanController::dynamicParametersCall
         // after the whole plugin parameter batch has been accepted here.
         auto replacement = std::make_unique<neupan::NeuPANPlanner>(cfg);
         planner_ = std::move(replacement);
+        have_command_ = false;
         new_plan_ = true;  // Re-project the existing Nav2 path on the next cycle.
       } else if (adjust_changed) {
         neupan::NeuPANPlanner::validate(cfg);

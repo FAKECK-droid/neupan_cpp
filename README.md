@@ -84,6 +84,8 @@ python tools/export_dune_weights.py model_5000.pth your_robot.bin your_planner.y
 包内 `neupan_controller_server` 入口为原生 Nav2 server 设置带类型的空图层参数，规避 Humble 的 YAML 空数组问题。
 支持通过 ROS 2 参数服务动态更新速度、避障权重/距离、点云筛选和终点转向增益；
 模型、话题和预测时域等初始化参数需 cleanup/configure 后修改。
+连续控制的首步加速度约束跟随上一条输出命令，避免低速里程计反馈把起步锁死；
+Scout 配置包含匹配模型、1 秒预测时域和缩小的目标间距，模型支持包内相对路径。
 话题、参数、模型轮廓匹配、接入与测试见插件文档和
 [参数示例](neupan_controller/config/neupan_controller.yaml)。
 另提供 [TurtleBot3 Waffle 官方仿真接入与 GPU 训练](neupan_controller/TURTLEBOT3.md)：

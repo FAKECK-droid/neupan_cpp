@@ -27,8 +27,8 @@ controller_server:
         iter_threshold: 0.1
       adjust:
         q_s: [1.0, 1.0, 1.0]
-        p_u: 1.0
-        eta: 10.0
+        p_u: 2.0
+        eta: 1.0
         d_max: 0.30
         d_min: 0.08
         ro_obs: 400.0
