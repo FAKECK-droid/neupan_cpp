@@ -73,7 +73,7 @@ local_costmap:
       height: 3
       resolution: 0.5
       update_frequency: 1.0
-      publish_frequency: 0.0
+      publish_frequency: 1.0
       # The thin server entry point sets plugins/filters to typed empty arrays.
       # Do not put [] here: Humble may reject untyped empty YAML arrays.
       # EXACT training vertices/order for the bundled diff_default.bin:
