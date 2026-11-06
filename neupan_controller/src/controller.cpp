@@ -84,6 +84,9 @@ void NeupanController::configure(
   params_.max_height = parameter(node, name + ".max_obstacle_height", 1.5);
   params_.min_range = parameter(node, name + ".min_obstacle_range", 0.0);
   params_.max_range = parameter(node, name + ".max_obstacle_range", 10.0);
+  params_.yaw_kp = parameter(node, name + ".goal_yaw_pid.kp", 1.5);
+  params_.yaw_ki = parameter(node, name + ".goal_yaw_pid.ki", 0.05);
+  params_.yaw_kd = parameter(node, name + ".goal_yaw_pid.kd", 0.1);
 
   neupan::NeuPANPlanner::Config cfg;
   cfg.receding = parameter(node, name + ".receding", 10);
@@ -106,9 +109,8 @@ void NeupanController::configure(
   if (std::filesystem::path(cfg.dune_checkpoint).is_relative())
     cfg.dune_checkpoint = package_share + "/" + cfg.dune_checkpoint;
   cfg.ipath.projected_reference = true;
-  cfg.ipath.use_goal_orientation = true;
-  // MPC tracks the final pose. Nav2 alone decides arrival; keep evaluating
-  // clearance and optimizing both inputs until its goal checker succeeds.
+  // Nav2 owns arrival. Keep the core checking obstacle clearance while the
+  // plugin aligns the final yaw instead of latching a position-only arrival.
   cfg.ipath.arrive_threshold = 0.0;
   cfg.ipath.interval = parameter(node, name + ".ipath.interval", 0.05);
   cfg.ipath.close_threshold = parameter(node, name + ".ipath.close_threshold", 0.1);
@@ -151,6 +153,7 @@ void NeupanController::activate() {
   timing_samples_ = 0;
   timing_means_.fill(0.0);
   timing_maxima_.fill(0.0);
+  rotating_to_goal_ = false;
   have_command_ = false;
   {
     std::lock_guard<std::mutex> cloud_lock(cloud_mutex_);
@@ -191,6 +194,18 @@ void NeupanController::cleanup() {
 
 void NeupanController::setPlan(const nav_msgs::msg::Path& path) {
   std::lock_guard<std::mutex> lock(mutex_);
+  // Periodic replans to the same goal must not restart position tracking.
+  bool same_goal = !path_.poses.empty() && !path.poses.empty() &&
+      path_.header.frame_id == path.header.frame_id;
+  if (same_goal) {
+    const auto& old_goal = path_.poses.back().pose;
+    const auto& new_goal = path.poses.back().pose;
+    same_goal = std::hypot(old_goal.position.x - new_goal.position.x,
+                           old_goal.position.y - new_goal.position.y) <= 1e-6 &&
+        std::abs(neupan::wrapToPi(tf2::getYaw(old_goal.orientation) -
+                                 tf2::getYaw(new_goal.orientation))) <= 1e-6;
+  }
+  if (!same_goal) rotating_to_goal_ = false;
   path_ = path;
   new_plan_ = true;
 }
@@ -243,7 +258,7 @@ neupan::Mat2X NeupanController::obstaclePoints(
 
 geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped& pose,
-    const geometry_msgs::msg::Twist& velocity, nav2_core::GoalChecker*) {
+    const geometry_msgs::msg::Twist& velocity, nav2_core::GoalChecker* goal_checker) {
   std::lock_guard<std::mutex> lock(mutex_);
   const auto cycle_start = std::chrono::steady_clock::now();
   try {
@@ -285,6 +300,21 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
       // Re-densification and invalid-path checks belong to libneupan.
       planner_->replaceInitialPath(std::move(path), state);
       new_plan_ = false;
+    }
+
+    geometry_msgs::msg::Pose tolerance;
+    geometry_msgs::msg::Twist velocity_tolerance;
+    if (!goal_checker->getTolerances(tolerance, velocity_tolerance))
+      throw nav2_core::PlannerException("Goal checker does not provide tolerances");
+    const auto& goal = path_.poses.back().pose;
+    const double yaw_error =
+        neupan::wrapToPi(tf2::getYaw(goal.orientation) - state.z());
+    if (!rotating_to_goal_ &&
+        std::hypot(state.x() - goal.position.x, state.y() - goal.position.y) <=
+            tolerance.position.x) {
+      rotating_to_goal_ = true;
+      yaw_integral_ = 0.0;
+      previous_yaw_error_ = yaw_error;
     }
 
     // Command bounds must advance from the command stream, as in neupan_cpp_ros.
@@ -339,6 +369,28 @@ geometry_msgs::msg::TwistStamped NeupanController::computeVelocityCommands(
       throw nav2_core::PlannerException(
           "NeuPAN solver failed, status " + std::to_string(info.solver_status));
 
+    if (rotating_to_goal_) {
+      action.x() = 0.0;
+      if (std::abs(yaw_error) <= tf2::getYaw(tolerance.orientation)) {
+        action.y() = 0.0;
+        yaw_integral_ = 0.0;
+      } else {
+        const double dt = command.elapsed;
+        const double max_w = cfg.max_speed.y();
+        const double integral = std::clamp(
+            yaw_integral_ + params_.yaw_ki * yaw_error * dt, -max_w, max_w);
+        const double desired = params_.yaw_kp * yaw_error + integral +
+            params_.yaw_kd * neupan::wrapToPi(yaw_error - previous_yaw_error_) / dt;
+        // Avoid accumulating integral while the angular-speed limit is saturated.
+        if (std::abs(desired) <= max_w || yaw_error * desired < 0.0)
+          yaw_integral_ = integral;
+        const double dw = cfg.max_acce.y() * std::min(dt, cfg.step_time);
+        action.y() = std::clamp(std::clamp(desired, -max_w, max_w),
+                                command.action.y() - dw, command.action.y() + dw);
+      }
+      previous_yaw_error_ = yaw_error;
+    }
+
     // This is Nav2's external speed limit; the core already enforces its own box.
     if (std::abs(action.x()) > linear_speed_limit_)
       action *= linear_speed_limit_ / std::abs(action.x());
@@ -380,7 +432,10 @@ rcl_interfaces::msg::SetParametersResult NeupanController::dynamicParametersCall
           updateParameter(parameter, name, "min_obstacle_height", next.min_height) ||
           updateParameter(parameter, name, "max_obstacle_height", next.max_height) ||
           updateParameter(parameter, name, "min_obstacle_range", next.min_range, 0.0) ||
-          updateParameter(parameter, name, "max_obstacle_range", next.max_range, 0.0)) {
+          updateParameter(parameter, name, "max_obstacle_range", next.max_range, 0.0) ||
+          updateParameter(parameter, name, "goal_yaw_pid.kp", next.yaw_kp, 0.0) ||
+          updateParameter(parameter, name, "goal_yaw_pid.ki", next.yaw_ki, 0.0) ||
+          updateParameter(parameter, name, "goal_yaw_pid.kd", next.yaw_kd, 0.0)) {
         changed = true;
         continue;
       }

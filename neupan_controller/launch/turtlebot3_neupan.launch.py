@@ -42,10 +42,10 @@ def launch_simulation(context):
     follow_path["max_acce"] = robot["max_acce"]
     controller_params = params["controller_server"]["ros__parameters"]
     controller_params["FollowPath"] = follow_path
-    # MPC controls the full pose; do not latch XY success before yaw converges.
+    # Latch XY arrival while the controller finishes the goal yaw in place.
     for checker in controller_params["goal_checker_plugins"]:
         if controller_params[checker]["plugin"] == "nav2_controller::SimpleGoalChecker":
-            controller_params[checker]["stateful"] = False
+            controller_params[checker]["stateful"] = True
 
     # Both costmaps use the same polygon and vertex order as DUNE training.
     # Their original layers, rates and padding remain unchanged.

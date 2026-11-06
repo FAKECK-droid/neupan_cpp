@@ -88,7 +88,8 @@ python tools/export_dune_weights.py model_5000.pth your_robot.bin your_planner.y
 Scout 配置包含匹配模型、1 秒预测时域和缩小的目标间距，模型支持包内相对路径。
 投影模式保存最近线段进度，按路径弧长生成参考轨迹；发布 reference_path / optimized_path 供 RViz 核对。
 Scout 线速度上限与实车下游限速对齐为 0.3 m/s，避免独立裁剪线速度改变转弯曲率。
-插件保留路径末点 yaw，由 MPC 统一控制终点位置与朝向；没有额外的旋转状态机，Nav2 按容差判定完成。
+首次进入 goal_checker 的位置容差后，插件锁定零线速度并以 PID 对齐目标 yaw；同目标重规划保留此状态。
+核心库恢复路径切线朝向和位置到达判断，SimpleGoalChecker 使用 stateful: true。
 核心提供各阶段单调时钟计时；插件通过 FollowPath/timing 发布本周期、均值及最大值（毫秒），含 PAN 轮数和求解状态。
 话题、参数、模型轮廓匹配、接入与测试见插件文档和
 [参数示例](neupan_controller/config/neupan_controller.yaml)。

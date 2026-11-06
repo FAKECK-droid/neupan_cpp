@@ -86,8 +86,10 @@ parameters require cleanup/configure.
 Projected references persist the nearest segment and advance by polyline arc length.
 The plugin publishes reference_path / optimized_path for RViz inspection. The Scout linear
 limit is 0.3 m/s to match the downstream limiter and avoid changing planned turning curvature.
-The plugin retains the supplied final yaw and lets MPC control both position and heading.
-There is no separate rotation state machine; Nav2 checks the final pose tolerances.
+On first entering the goal checker's XY tolerance, the plugin latches zero linear
+velocity and uses PID to align the goal yaw, preserving this state across same-goal
+replans. The core returns to tangent headings and position-only arrival; use
+SimpleGoalChecker with stateful: true.
 Core stage timings use a steady clock. FollowPath/timing publishes current, mean and
 maximum durations in milliseconds, attempted PAN iterations and solver status.
 Consecutive first-input acceleration bounds follow the previous output command so

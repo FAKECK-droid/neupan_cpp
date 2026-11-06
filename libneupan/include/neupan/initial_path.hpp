@@ -30,10 +30,6 @@ class InitialPath {
     bool loop = false;
     double interval = -1.0;  // < 0: default dt * ref_speed
     double arrive_threshold = 0.1;
-    // Opt in to tracking the supplied final yaw instead of the final tangent.
-    // Diff-drive arrival then also checks arrive_yaw_threshold.
-    bool use_goal_orientation = false;
-    double arrive_yaw_threshold = 0.1;
     double close_threshold = 0.1;
     int ind_range = 10;
     int arrive_index_threshold = 1;

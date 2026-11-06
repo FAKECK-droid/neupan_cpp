@@ -112,10 +112,6 @@ NeuPANPlanner NeuPANPlanner::fromYaml(const std::string& yaml_path,
     c.ipath.interval = ip["interval"].as<double>(-1.0);
     c.ipath.arrive_threshold =
         ip["arrive_threshold"].as<double>(c.ipath.arrive_threshold);
-    c.ipath.use_goal_orientation =
-        ip["use_goal_orientation"].as<bool>(c.ipath.use_goal_orientation);
-    c.ipath.arrive_yaw_threshold =
-        ip["arrive_yaw_threshold"].as<double>(c.ipath.arrive_yaw_threshold);
     c.ipath.close_threshold =
         ip["close_threshold"].as<double>(c.ipath.close_threshold);
     c.ipath.ind_range = ip["ind_range"].as<int>(c.ipath.ind_range);

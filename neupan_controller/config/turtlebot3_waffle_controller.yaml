@@ -16,6 +16,10 @@ controller_server:
       step_time: 0.05
       ref_speed: 0.20
       collision_threshold: 0.03
+      goal_yaw_pid:
+        kp: 1.5
+        ki: 0.05
+        kd: 0.1
       ipath:
         interval: 0.025
         close_threshold: 0.05

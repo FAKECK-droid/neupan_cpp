@@ -41,6 +41,9 @@ class NeupanController : public nav2_core::Controller {
     double max_height = 1.5;
     double min_range = 0.0;
     double max_range = 10.0;
+    double yaw_kp = 1.5;
+    double yaw_ki = 0.05;
+    double yaw_kd = 0.1;
   };
 
   rcl_interfaces::msg::SetParametersResult dynamicParametersCallback(
@@ -73,6 +76,9 @@ class NeupanController : public nav2_core::Controller {
   double speed_limit_ = 0.0;
   bool speed_limit_percentage_ = false;
   bool new_plan_ = false;
+  bool rotating_to_goal_ = false;
+  double yaw_integral_ = 0.0;  // integral contribution, rad/s
+  double previous_yaw_error_ = 0.0;
   neupan::Vec2 last_command_ = neupan::Vec2::Zero();
   std::chrono::steady_clock::time_point command_time_;
   bool have_command_ = false;
